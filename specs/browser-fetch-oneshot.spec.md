@@ -1,9 +1,33 @@
 spec: task
 name: "browser-fetch-oneshot"
 inherits: project
-tags: [actionbook, cli, research-workflow, phase-2]
+tags: [actionbook, cli, research-workflow, phase-2, superseded]
 estimate: 1d
 depends: [browser-text-readable, browser-text-readable-paragraphs]
+status: removed
+---
+
+## ⚠ REMOVED 2026-04-17
+
+This task was implemented (commits `3263ee7e`, `3818b579`) then reverted
+(commit `b0d969ce`) after Layer 4 end-to-end acceptance surfaced two bugs:
+
+1. `IO_ERROR: early eof` on live URLs (fixed)
+2. Second call on same session returns `about:blank` with 0 bytes —
+   silent failure that produces empty research output without surfacing
+   an error (**unresolved**)
+
+Decision: the 3-step pattern (`new-tab` + `wait network-idle` + `text`)
+is canonical for the research workflow. A one-shot command saves ~2 IPC
+round-trips per source but hides per-primitive observability from the
+LLM consumer, which is unacceptable when source quality judgement
+depends on per-step status, URL, and byte counts.
+
+The original intent (below) is preserved for historical reference. If a
+future iteration wants to revisit, the observability loss must be
+addressed first — e.g., by returning all intermediate step statuses in
+the response envelope rather than one black-box result.
+
 ---
 
 ## 意图

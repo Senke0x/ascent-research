@@ -246,14 +246,18 @@ Discovered during B4 validation: every research workflow to date is **fully seri
 
 **What's needed (combined Tier 2 task, ~1 week):**
 
-13. **Verify daemon concurrency is safe** — quick smoke test: 3 parallel `browser fetch` calls against different URLs on the same session, confirm no race on `SessionState.active_page_id` or other shared state. If unsafe, file a bug and fix before promoting parallelism.
-14. **Add a "parallel sources" section to `active-research` SKILL.md** — give the model a concrete recipe: "when the discover step returns ≥ 3 independent source URLs, open them all in one `new-tab` call, then dispatch parallel `fetch` per tab via shell `& ... wait` or Agent tool with `run_in_background: true`; serialise only the synthesise step."
-15. **Parallel `postagent` pattern** — document that independent API calls (GitHub + arXiv + HN + Tavily) should run concurrently via shell `&`. No tool change needed, just prompt engineering in the skill.
-16. **Benchmark** — one real `/active-research` run before vs after, measure wall-clock and token cost. Previous retrospective has `rust-async-concurrency-deep-dive.json` as the before-baseline.
+13. **Verify daemon concurrency is safe** — the L4 run indirectly confirmed that multi-URL `new-tab` + concurrent `wait network-idle` + concurrent `text --readable` works safely on one session (3 parallel tabs, 63 KB content, ~10 s). A formal smoke test remains a good idea, but the critical proof-point is in hand.
+14. **Add a "parallel sources" section to `active-research` SKILL.md** — recipe: "when discover returns ≥ 3 independent source URLs, open them all in one `new-tab` call with multiple `--tab` names, then dispatch `wait network-idle` + `text [--readable]` for each tab in shell `& ... wait`; synthesise only at the end."
+15. **Parallel `postagent` pattern** — document that independent API calls (HN Algolia + GitHub + arXiv) should run concurrently via shell `&`. L4 run measured 3 parallel API calls complete in < 2 s wall-clock.
+16. **Benchmark** — one real `/active-research` run before vs after, measure wall-clock and token cost. L4 run is a de-facto after-baseline (API layer < 2 s, browser layer ~10 s, synthesis + render < 5 s).
 
-**Why Tier 2**: coordinates across 3 layers (daemon safety, skill prompt, user habit). Lower than the "session substrate" big-bang because it can ship incrementally (first docs change, then safety validation, then benchmark-driven iteration).
+**Why Tier 2**: coordinates across 2 layers (skill prompt + user habit). Lower than the "session substrate" big-bang because it can ship incrementally. **Unblocked**: no longer depends on `browser fetch` — the pattern uses only existing original primitives.
 
-**Depends on**: B4 (`browser fetch`) being stable on live URLs — currently blocked by `IO_ERROR: early eof` on real-world response sizes (see branch `feature/browser-fetch-oneshot`, commit `3263ee7e` passes E2E fixtures but fails live). Without `fetch`, the "one command per source" building block for parallelism isn't reliable.
+### B4 removal (2026-04-17, post-L4)
+
+L4 acceptance surfaced an unresolved bug in `browser fetch` (issue #003-style: second call on same session returns `about:blank` silently). Combined with the earlier `IO_ERROR: early eof` bug on live URLs, and the observation that the 3-step pattern gives per-primitive observability that a one-shot command folds away, we reverted B4 entirely (commit `b0d969ce` on `feature/browser-fetch-oneshot`). The spec is marked `status: removed`.
+
+**Lesson**: For LLM-facing research tooling, **observability > terseness**. A one-shot command saves a few IPC round-trips and a couple of prompt tokens, but when it silently fails (returns `about:blank` with exit code 0), the LLM has no signal to distinguish "tool bug" from "empty source" and will dutifully synthesise a report from zero-byte inputs. Each primitive — `new-tab` returning a URL, `wait network-idle` either settling or timing out, `text` reporting byte size — is a separate probe the model can use to judge source quality. Re-consider higher-level sugar only when each intermediate step status can be preserved in the response envelope.
 
 ### Tier 3 — nice-to-haves (opportunistic)
 
