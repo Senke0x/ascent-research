@@ -233,6 +233,28 @@ These unlock research workflows from "tolerable" to "actually fast".
 
 This is the strategic piece that turns Phase 1's pointillist tools into a coherent platform.
 
+### Tier 2 — parallel research workflow (added 2026-04-17, elevated from Small #17)
+
+Discovered during B4 validation: every research workflow to date is **fully serial**. 6 blog reads in the Rust async concurrency run were ~15–20 s wall-clock; parallelising would drop that to 3–4 s (3–5× faster). The tool layer already supports parallelism at several granularities, but neither the `active-research` skill nor our research habits leverage it.
+
+**What exists but is unused:**
+
+- `browser new-tab URL1 URL2 URL3 --session s --tab a --tab b --tab c` opens N tabs in one call (CLI already supports multi-URL)
+- Daemon handles concurrent requests — shell `&` / `wait` works today
+- Multi-session (fresh browser instances) works today
+- Agent tool's `run_in_background: true` lets us dispatch N independent fetches as parallel subagents
+
+**What's needed (combined Tier 2 task, ~1 week):**
+
+13. **Verify daemon concurrency is safe** — quick smoke test: 3 parallel `browser fetch` calls against different URLs on the same session, confirm no race on `SessionState.active_page_id` or other shared state. If unsafe, file a bug and fix before promoting parallelism.
+14. **Add a "parallel sources" section to `active-research` SKILL.md** — give the model a concrete recipe: "when the discover step returns ≥ 3 independent source URLs, open them all in one `new-tab` call, then dispatch parallel `fetch` per tab via shell `& ... wait` or Agent tool with `run_in_background: true`; serialise only the synthesise step."
+15. **Parallel `postagent` pattern** — document that independent API calls (GitHub + arXiv + HN + Tavily) should run concurrently via shell `&`. No tool change needed, just prompt engineering in the skill.
+16. **Benchmark** — one real `/active-research` run before vs after, measure wall-clock and token cost. Previous retrospective has `rust-async-concurrency-deep-dive.json` as the before-baseline.
+
+**Why Tier 2**: coordinates across 3 layers (daemon safety, skill prompt, user habit). Lower than the "session substrate" big-bang because it can ship incrementally (first docs change, then safety validation, then benchmark-driven iteration).
+
+**Depends on**: B4 (`browser fetch`) being stable on live URLs — currently blocked by `IO_ERROR: early eof` on real-world response sizes (see branch `feature/browser-fetch-oneshot`, commit `3263ee7e` passes E2E fixtures but fails live). Without `fetch`, the "one command per source" building block for parallelism isn't reliable.
+
 ### Tier 3 — nice-to-haves (opportunistic)
 
 - F1-F3 — json-ui schema validation
