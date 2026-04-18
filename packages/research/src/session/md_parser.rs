@@ -7,6 +7,21 @@
 
 use std::collections::HashMap;
 
+/// Convenience: pull out the `## Overview` section body from a session.md,
+/// or None if missing / empty / just placeholder.
+pub fn extract_overview(md: &str) -> Option<String> {
+    let sections = parse_sections(md);
+    let body = sections.get("Overview")?.trim();
+    if body.is_empty() {
+        return None;
+    }
+    // Placeholder-only (a single HTML comment) shouldn't propagate.
+    if body.starts_with("<!--") && body.ends_with("-->") && !body.contains('\n') {
+        return None;
+    }
+    Some(body.to_string())
+}
+
 /// Parse top-level `## <name>` sections. Returns a map of section name to
 /// body text (without the heading line itself; trimmed).
 pub fn parse_sections(md: &str) -> HashMap<String, String> {

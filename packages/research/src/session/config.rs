@@ -27,6 +27,12 @@ pub struct SessionConfig {
     pub max_sources: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub closed_at: Option<DateTime<Utc>>,
+    /// Slug of the parent session if this one was created via `--from`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_slug: Option<String>,
+    /// Free-form tags for grouping into series.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 impl SessionConfig {
@@ -38,6 +44,8 @@ impl SessionConfig {
             created_at: Utc::now(),
             max_sources: None,
             closed_at: None,
+            parent_slug: None,
+            tags: Vec::new(),
         }
     }
 

@@ -9,6 +9,7 @@ pub mod new;
 pub mod resume;
 pub mod rm;
 pub mod route;
+pub mod series;
 pub mod show;
 pub mod sources;
 pub mod status;

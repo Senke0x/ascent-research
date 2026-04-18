@@ -6,7 +6,20 @@
 
 use super::layout::{SOURCES_END_MARKER, SOURCES_START_MARKER};
 
-pub fn render(topic: &str, preset: &str) -> String {
+/// Render a session.md template. If `parent_slug` + `parent_overview` are
+/// both provided (from a `--from <parent>` fork) a `## Context (from <parent>)`
+/// block is inserted between Preset and Sources so the LLM editing the child
+/// session can see what the parent was about.
+pub fn render_with_context(
+    topic: &str,
+    preset: &str,
+    parent_slug: Option<&str>,
+    parent_overview: Option<&str>,
+) -> String {
+    let context_block = match (parent_slug, parent_overview) {
+        (Some(p), Some(o)) => format!("\n## Context (from {p})\n{o}\n\n"),
+        _ => String::new(),
+    };
     format!(
         "# Research: {topic}\n\
          \n\
@@ -16,6 +29,7 @@ pub fn render(topic: &str, preset: &str) -> String {
          ## Preset\n\
          {preset}\n\
          \n\
+         {context_block}\
          ## Sources\n\
          {SOURCES_START_MARKER}\n\
          _(auto-managed by `research add` — do not hand-edit between markers)_\n\
@@ -33,6 +47,10 @@ pub fn render(topic: &str, preset: &str) -> String {
     )
 }
 
+pub fn render(topic: &str, preset: &str) -> String {
+    render_with_context(topic, preset, None, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::layout::locate_sources_block;
@@ -46,5 +64,25 @@ mod tests {
         assert!(md.contains("tech"));
         let range = locate_sources_block(&md).unwrap();
         assert!(!md[range].is_empty());
+    }
+
+    #[test]
+    fn template_with_context_has_parent_overview() {
+        let md = render_with_context(
+            "Child",
+            "tech",
+            Some("parent-slug"),
+            Some("Parent overview sentence."),
+        );
+        assert!(md.contains("## Context (from parent-slug)"));
+        assert!(md.contains("Parent overview sentence."));
+        // Markers must still be valid
+        assert!(locate_sources_block(&md).is_ok());
+    }
+
+    #[test]
+    fn template_without_context_omits_block() {
+        let md = render("Solo", "tech");
+        assert!(!md.contains("## Context"));
     }
 }

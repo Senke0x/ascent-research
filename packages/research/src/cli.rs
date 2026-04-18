@@ -42,9 +42,22 @@ pub enum Commands {
         slug: Option<String>,
         #[arg(long)]
         force: bool,
+        /// Fork from a parent session — copies its ## Overview as ## Context.
+        #[arg(long = "from")]
+        from: Option<String>,
+        /// Tag this session (repeatable). Inherited from --from if provided.
+        #[arg(long = "tag", action = clap::ArgAction::Append)]
+        tag: Vec<String>,
     },
     /// List all research sessions.
-    List,
+    List {
+        /// Filter by tag.
+        #[arg(long)]
+        tag: Option<String>,
+        /// Show parent→child hierarchy as an ASCII tree.
+        #[arg(long)]
+        tree: bool,
+    },
     /// Print a session.md to stdout so an agent can resume context.
     Show { slug: String },
     /// Show counts + timings for the current or given session.
@@ -95,6 +108,12 @@ pub enum Commands {
         #[arg(long)]
         preset: Option<String>,
     },
+    /// Generate an HTML index page for all sessions with a given tag.
+    Series {
+        tag: String,
+        #[arg(long)]
+        open: bool,
+    },
     /// Show help (alias of --help).
     Help,
 }
@@ -134,10 +153,17 @@ pub fn run() -> ExitCode {
 
 fn dispatch(cmd: Commands) -> Envelope {
     match cmd {
-        Commands::New { topic, preset, slug, force } => {
-            commands::new::run(&topic, preset.as_deref(), slug.as_deref(), force)
+        Commands::New { topic, preset, slug, force, from, tag } => {
+            commands::new::run(
+                &topic,
+                preset.as_deref(),
+                slug.as_deref(),
+                force,
+                from.as_deref(),
+                &tag,
+            )
         }
-        Commands::List => commands::list::run(),
+        Commands::List { tag, tree } => commands::list::run(tag.as_deref(), tree),
         Commands::Show { slug } => commands::show::run(&slug),
         Commands::Status { slug } => commands::status::run(slug.as_deref()),
         Commands::Resume { slug } => commands::resume::run(&slug),
@@ -155,6 +181,7 @@ fn dispatch(cmd: Commands) -> Envelope {
         Commands::Route { url, prefer, rules, preset } => {
             commands::route::run(&url, prefer.as_deref(), rules.as_deref(), preset.as_deref())
         }
+        Commands::Series { tag, open } => commands::series::run(&tag, open),
         Commands::Help => unreachable!("Help handled in run()"),
     }
 }
