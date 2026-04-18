@@ -147,7 +147,9 @@ fn dispatch(cmd: Commands) -> Envelope {
         Commands::Sources { slug, rejected } => {
             commands::sources::run(slug.as_deref(), rejected)
         }
-        Commands::Synthesize { .. } => commands::synthesize::run(),
+        Commands::Synthesize { slug, no_render, open } => {
+            commands::synthesize::run(slug.as_deref(), no_render, open)
+        }
         Commands::Close { slug } => commands::close::run(slug.as_deref()),
         Commands::Rm { slug, force } => commands::rm::run(&slug, force),
         Commands::Route { url, prefer, rules, preset } => {

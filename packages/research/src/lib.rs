@@ -13,5 +13,6 @@ pub mod cli;
 pub mod commands;
 pub mod fetch;
 pub mod output;
+pub mod report;
 pub mod route;
 pub mod session;

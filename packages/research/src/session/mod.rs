@@ -8,6 +8,7 @@ pub mod config;
 pub mod event;
 pub mod layout;
 pub mod log;
+pub mod md_parser;
 pub mod md_template;
 pub mod slug;
 pub mod sources_block;
