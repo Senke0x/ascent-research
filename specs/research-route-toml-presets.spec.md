@@ -1,0 +1,178 @@
+spec: task
+name: "research-route-toml-presets"
+inherits: project
+tags: [research-cli, routing, toml, preset, phase-3]
+estimate: 0.5d
+depends: [research-cli-foundation]
+---
+
+## 意图
+
+把路由规则从"Rust 枚举硬编码"升级为"TOML preset 文件驱动",实装 `research route <url>`
+子命令。目标是让用户加一个新领域的权威源等同于**写一份 TOML 文件,零 Rust 改动**。
+
+Preset ship 在 `research-api-adapter/presets/` 目录下,首发 `tech.toml`(与现有
+`actionbook source route` 的硬编码规则 bit-identical),后续领域由
+`source-route-domain-preset` discovery 任务决定加哪些。
+
+`actionbook source route` 子命令**保留不变**——作为 actionbook 通用能力,非研究场景
+也能用;`research route` 内部 port 相同逻辑 + 支持 TOML 加载,两者独立演化。
+
+## 已定决策
+
+- Preset 文件格式(TOML):
+  ```toml
+  name = "tech"
+  description = "Rust / AI / general tech — HN + GitHub + arXiv"
+
+  [[rule]]
+  kind = "hn-item"
+  host = "news.ycombinator.com"
+  path = "/item"
+  query_param = { id = "^[0-9]+$" }
+  executor = "postagent"
+  template = 'postagent send --anonymous "https://hacker-news.firebaseio.com/v0/item/{id}.json"'
+
+  [[rule]]
+  kind = "hn-topstories"
+  host = "news.ycombinator.com"
+  path_any_of = ["/", "", "/news"]
+  executor = "postagent"
+  template = '...'
+
+  [[rule]]
+  kind = "github-repo-readme"
+  host = "github.com"
+  path_segments = ["{owner}", "{repo}"]       # 正好 2 段
+  executor = "postagent"
+  template = 'postagent send --anonymous "https://api.github.com/repos/{owner}/{repo}/readme"'
+
+  [fallback]
+  executor = "browser"
+  kind = "browser-fallback"
+  template = 'actionbook browser new-tab "{url}" && wait-idle && text'
+  ```
+- 规则匹配器支持:
+  - `host`(精确 + 大小写不敏感,必需)
+  - `path`(精确)或 `path_any_of`(任选一)或 `path_segments`(模板占位符如 `{owner}` `{repo}`)
+  - `query_param`(可选,map of name → regex)
+  - 模板占位符:`{url}`, `{host}`, `{path}`, + path_segments 捕获 + query_param 捕获
+- 第一个匹配的规则生效;无匹配走 `[fallback]`
+- CLI 命令:
+  ```
+  research route <url> [--preset <name>] [--rules <path>] [--prefer browser] [--json]
+  ```
+- Preset 查找顺序:
+  1. `--rules <path>`(完整路径)覆盖
+  2. `--preset <name>` 查找顺序:
+     a. `~/.actionbook/research/presets/<name>.toml`(用户覆盖)
+     b. 安装位置 `<crate>/presets/<name>.toml`(内置)
+  3. 无 `--preset` / `--rules` 时默认 `tech`
+- **内置 tech preset 必须和现有 `actionbook source route` 规则行为一致**(port 5 条规则:
+  hn-item / hn-topstories / github-repo-readme / github-issue / arxiv-abs)
+- Preset 加载错误(找不到文件 / TOML 解析失败 / 必需字段缺失)返回 `PRESET_ERROR`
+- URL 解析失败(非 http(s))返回 `INVALID_ARGUMENT`,和现有 actionbook source route 对齐
+- **不**做规则的运行时热重载(CLI 每次启动重新读 TOML)
+- **不**做 preset 的远程下载 / auto-update
+- **不**嵌入 Python-style 正则(用 Rust `regex` crate 的 POSIX 子集)
+
+## 边界
+
+### 允许修改
+- `research-api-adapter/packages/research/src/commands/route.rs`(新)
+- `research-api-adapter/packages/research/src/route/rules.rs`(新,TOML 模型 + 匹配器)
+- `research-api-adapter/packages/research/Cargo.toml`(加 `toml`, `regex` 依赖)
+- `research-api-adapter/presets/tech.toml`(新)
+- `research-api-adapter/packages/research/tests/route.rs`(E2E)
+
+### 禁止做
+- 不改 actionbook 的 `source route` 子命令(共存策略,各自维护)
+- 不做 preset 远程 CDN / auto-update / 签名
+- 不支持用户配置文件中嵌入 shell 脚本(template 是字符串模板,不执行)
+- 不引入 `serde_yaml` 或 JSON 规则格式(只 TOML)
+- 不做规则优先级自定义(按 TOML 数组顺序匹配,先到先得)
+
+## 完成条件
+
+场景: tech preset 的 5 条规则和 actionbook source route 行为一致
+  测试:
+    包: research-api-adapter/packages/research
+    过滤: route_tech_parity_with_actionbook
+  层级: integration
+  假设 `presets/tech.toml` ship 齐 5 条规则(hn-item / hn-topstories / github-repo-readme / github-issue / arxiv-abs)
+  当 对每条规则的代表 URL 同时跑 `research route <url> --json` 和
+    `actionbook source route <url> --json`
+  那么 `.data.executor`, `.data.kind`, `.data.command_template` 一致
+    (字段名按两者协议 normalize 后对比)
+  并且 未匹配任何规则的 URL 都落到 `browser-fallback`
+
+场景: 用户 TOML 覆盖内置
+  测试:
+    包: research-api-adapter/packages/research
+    过滤: route_user_preset_override
+  层级: integration
+  假设 `~/.actionbook/research/presets/tech.toml` 用户版把 hn-item 的 template 改了
+  当 `research route "https://news.ycombinator.com/item?id=1" --preset tech`
+  那么 返回用户版 template,不是内置版
+  假设 去掉用户版文件
+  当 重跑
+  那么 返回内置版 template
+
+场景: --rules 直接指向任意 TOML 文件
+  测试:
+    包: research-api-adapter/packages/research
+    过滤: route_explicit_rules_path
+  层级: integration
+  假设 `/tmp/custom.toml` 定义一条规则(host "example.com" → executor "postagent")
+  当 `research route "https://example.com/foo" --rules /tmp/custom.toml`
+  那么 `.data.executor` = "postagent"
+  并且 内置 tech preset 不被加载
+
+场景: Preset 加载错误有清晰错误
+  测试:
+    包: research-api-adapter/packages/research
+    过滤: route_preset_error_codes
+  层级: unit
+  假设 TOML 文件缺少 `host` 或 `fallback` 段
+  当 加载
+  那么 退出码非 0,error code `PRESET_ERROR`
+  并且 error message 含失败文件路径 + 失败字段描述
+
+场景: --prefer browser 绕过 API 规则
+  测试:
+    包: research-api-adapter/packages/research
+    过滤: route_prefer_browser
+  层级: unit
+  当 `research route "https://github.com/foo/bar" --prefer browser --preset tech`
+  那么 `.data.executor` = "browser"
+  并且 `.data.kind` = "browser-forced"
+
+场景: 模板占位符展开
+  测试:
+    包: research-api-adapter/packages/research
+    过滤: route_template_interpolation
+  层级: unit
+  假设 规则模板含 `{owner}` `{repo}` `{id}` 等占位
+  当 URL 中的对应片段被捕获
+  那么 输出的 `command_template` 里占位符被替换为实际值
+  并且 未捕获到的占位符(e.g. 规则写了 `{foo}` 但 URL 没给)作为 spec lint 级别错误,
+    加载 preset 时就报错(不等到运行)
+
+场景: 无 preset 指定时默认 tech
+  测试:
+    包: research-api-adapter/packages/research
+    过滤: route_default_preset_is_tech
+  层级: unit
+  当 `research route "https://news.ycombinator.com/" --json`(不带 --preset / --rules)
+  那么 执行使用内置 tech preset
+  并且 返回 hn-topstories
+
+## 排除范围
+
+- actionbook source route 的弃用或合并(双轨保留)
+- domain preset 的 discovery 研究(由 `source-route-domain-preset` 独立任务产出)
+- preset 的 schema 版本 / 迁移工具(当前 schema 固定)
+- 多 preset 合并 / 叠加规则(单一 preset 文件,无 cascade)
+- 规则的性能优化(预期 < 30 条规则,线性扫描足够)
+- 用户 GUI 管理 preset
+- `research route list-presets`(留给未来 inspection task)

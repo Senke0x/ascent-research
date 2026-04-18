@@ -1,9 +1,25 @@
 spec: task
 name: "research-session-directory"
 inherits: project
-tags: [actionbook, research-workflow, artifact-persistence, phase-3]
+tags: [actionbook, research-workflow, artifact-persistence, phase-3, superseded]
 estimate: 0.5d
 depends: []
+status: superseded
+superseded_by: [research-cli-foundation, research-session-lifecycle]
+---
+
+### ⚠ SUPERSEDED 2026-04-19
+
+This spec was written 2026-04-18 assuming a "convention-only" 目录布局 used by
+SKILL.md bash snippets (without a dedicated CLI). On 2026-04-19 the direction
+changed: research-api-adapter grows a full `research` CLI that owns the
+directory lifecycle. The directory contract is now codified in
+`research-cli-foundation.spec.md` (session.md / session.jsonl / session.toml /
+raw/ / report.json / report.html). Session lifecycle operations (new / list /
+show / status / resume / close / rm) are specified in
+`research-session-lifecycle.spec.md`.
+
+Historical content preserved below for context.
 ---
 
 ## 意图

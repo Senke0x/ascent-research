@@ -6,7 +6,7 @@ estimate: 0.5d
 depends: []
 ---
 
-## 实装时修订 (2026-04-18)
+### 实装时修订 (2026-04-18)
 
 原 spec 预判可以 gate 三个 feature:`stealth`+`camoufox`+`source`。实装期盘点发现:
 

@@ -7,7 +7,7 @@ depends: [browser-text-readable, browser-text-readable-paragraphs]
 status: removed
 ---
 
-## ⚠ REMOVED 2026-04-17
+### ⚠ REMOVED 2026-04-17
 
 This task was implemented (commits `3263ee7e`, `3818b579`) then reverted
 (commit `b0d969ce`) after Layer 4 end-to-end acceptance surfaced two bugs:
