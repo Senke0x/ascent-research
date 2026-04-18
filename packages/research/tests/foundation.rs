@@ -52,18 +52,14 @@ fn research_help_alias_exits_zero() {
 }
 
 #[test]
-fn stub_subcommands_return_not_implemented_json() {
+fn remaining_stubs_return_not_implemented_json() {
+    // After lifecycle MVP (#2), session commands are live. Only route /
+    // add / sources / synthesize remain stubs until their respective specs
+    // implement them.
     let stubs: &[(&[&str], &str)] = &[
-        (&["new", "foo", "--json"], "research new"),
-        (&["list", "--json"], "research list"),
-        (&["show", "foo", "--json"], "research show"),
-        (&["status", "--json"], "research status"),
-        (&["resume", "foo", "--json"], "research resume"),
         (&["add", "https://example.com", "--json"], "research add"),
         (&["sources", "--json"], "research sources"),
         (&["synthesize", "--json"], "research synthesize"),
-        (&["close", "--json"], "research close"),
-        (&["rm", "foo", "--force", "--json"], "research rm"),
         (
             &["route", "https://news.ycombinator.com/", "--json"],
             "research route",

@@ -134,16 +134,18 @@ pub fn run() -> ExitCode {
 
 fn dispatch(cmd: Commands) -> Envelope {
     match cmd {
-        Commands::New { .. } => commands::new::run(),
+        Commands::New { topic, preset, slug, force } => {
+            commands::new::run(&topic, preset.as_deref(), slug.as_deref(), force)
+        }
         Commands::List => commands::list::run(),
-        Commands::Show { .. } => commands::show::run(),
-        Commands::Status { .. } => commands::status::run(),
-        Commands::Resume { .. } => commands::resume::run(),
+        Commands::Show { slug } => commands::show::run(&slug),
+        Commands::Status { slug } => commands::status::run(slug.as_deref()),
+        Commands::Resume { slug } => commands::resume::run(&slug),
         Commands::Add { .. } => commands::add::run(),
         Commands::Sources { .. } => commands::sources::run(),
         Commands::Synthesize { .. } => commands::synthesize::run(),
-        Commands::Close { .. } => commands::close::run(),
-        Commands::Rm { .. } => commands::rm::run(),
+        Commands::Close { slug } => commands::close::run(slug.as_deref()),
+        Commands::Rm { slug, force } => commands::rm::run(&slug, force),
         Commands::Route { .. } => commands::route::run(),
         Commands::Help => unreachable!("Help handled in run()"),
     }

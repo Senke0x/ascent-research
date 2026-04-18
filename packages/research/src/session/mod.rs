@@ -4,6 +4,9 @@
 //! and data-shape definitions. `commands::*` builds on top of this layer.
 
 pub mod active;
+pub mod config;
 pub mod event;
 pub mod layout;
+pub mod log;
+pub mod md_template;
 pub mod slug;

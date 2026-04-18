@@ -11,7 +11,16 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 /// Root directory for all research sessions.
+///
+/// Honors `ACTIONBOOK_RESEARCH_HOME` env var as an override (tests rely on
+/// this to isolate from the real ~/.actionbook). Falls back to
+/// `~/.actionbook/research/`.
 pub fn research_root() -> PathBuf {
+    if let Ok(override_path) = std::env::var("ACTIONBOOK_RESEARCH_HOME") {
+        if !override_path.is_empty() {
+            return PathBuf::from(override_path);
+        }
+    }
     dirs::home_dir()
         .expect("home_dir must be resolvable on supported platforms")
         .join(".actionbook")
