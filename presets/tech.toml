@@ -1,0 +1,43 @@
+name = "tech"
+description = "Rust / AI / general tech — HN + GitHub + arXiv"
+
+[[rule]]
+kind = "hn-item"
+host = "news.ycombinator.com"
+path = "/item"
+query_param = { id = "[0-9]+" }
+executor = "postagent"
+template = 'postagent send --anonymous "https://hacker-news.firebaseio.com/v0/item/{id}.json"'
+
+[[rule]]
+kind = "hn-topstories"
+host = "news.ycombinator.com"
+path_any_of = ["/", "", "/news"]
+executor = "postagent"
+template = 'postagent send --anonymous "https://hacker-news.firebaseio.com/v0/topstories.json"'
+
+[[rule]]
+kind = "github-issue"
+host = "github.com"
+path_segments = ["{owner}", "{repo}", "issues", "{num}"]
+executor = "postagent"
+template = 'postagent send --anonymous "https://api.github.com/repos/{owner}/{repo}/issues/{num}"'
+
+[[rule]]
+kind = "github-repo-readme"
+host = "github.com"
+path_segments = ["{owner}", "{repo}"]
+executor = "postagent"
+template = 'postagent send --anonymous "https://api.github.com/repos/{owner}/{repo}/readme"'
+
+[[rule]]
+kind = "arxiv-abs"
+host = "arxiv.org"
+path_segments = ["abs", "{id}"]
+executor = "postagent"
+template = 'postagent send --anonymous "http://export.arxiv.org/api/query?id_list={id}"'
+
+[fallback]
+executor = "browser"
+kind = "browser-fallback"
+template = '''actionbook browser new-tab "{url}" --session <s> --tab <t> && actionbook browser wait network-idle --session <s> --tab <t> && actionbook browser text [--readable] --session <s> --tab <t>'''

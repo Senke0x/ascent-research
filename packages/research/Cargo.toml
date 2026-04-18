@@ -21,6 +21,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 dirs = "6"
 fs2 = "0.4"
 toml = "0.8"
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"

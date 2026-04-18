@@ -60,10 +60,6 @@ fn remaining_stubs_return_not_implemented_json() {
         (&["add", "https://example.com", "--json"], "research add"),
         (&["sources", "--json"], "research sources"),
         (&["synthesize", "--json"], "research synthesize"),
-        (
-            &["route", "https://news.ycombinator.com/", "--json"],
-            "research route",
-        ),
     ];
     for (args, expected_cmd) in stubs {
         let (stdout, _, code) = run(args);

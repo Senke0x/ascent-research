@@ -146,7 +146,9 @@ fn dispatch(cmd: Commands) -> Envelope {
         Commands::Synthesize { .. } => commands::synthesize::run(),
         Commands::Close { slug } => commands::close::run(slug.as_deref()),
         Commands::Rm { slug, force } => commands::rm::run(&slug, force),
-        Commands::Route { .. } => commands::route::run(),
+        Commands::Route { url, prefer, rules, preset } => {
+            commands::route::run(&url, prefer.as_deref(), rules.as_deref(), preset.as_deref())
+        }
         Commands::Help => unreachable!("Help handled in run()"),
     }
 }
