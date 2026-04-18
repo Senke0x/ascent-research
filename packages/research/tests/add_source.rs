@@ -365,9 +365,12 @@ fn add_missing_dependency_when_binary_not_found() {
 }
 
 #[test]
-fn add_url_argv_safety() {
-    // The fake postagent writes its argv to a file and emits a benign
-    // response. If the URL got shell-interpreted, argv wouldn't match.
+fn argv_boundary_does_not_invoke_shell() {
+    // Deliberately malformed byte string containing shell metacharacters
+    // (spaces, quotes, semicolons). This is NOT a valid URL per RFC 3986 —
+    // the test is about what happens if someone (or a misbehaving LLM)
+    // passes such bytes anyway. Rust's `Command::arg` does not invoke a
+    // shell, so `touch /tmp/pwned_research` must NOT execute.
     let env = Env::new();
     env.research(&["new", "t1", "--slug", "t1", "--json"]);
 
@@ -386,7 +389,6 @@ JSON
     );
     let pa = env.write_fake_bin("postagent", &script);
 
-    // Shell-injection-style URL
     let evil = r#"https://news.ycombinator.com/item?id=1"; touch /tmp/pwned_research; echo ""#;
     let (_, _, _) = env.research_with_bins(
         &["add", evil, "--slug", "t1", "--json"],
@@ -394,20 +396,48 @@ JSON
         None,
     );
 
-    // The core safety claim: shell metacharacters in the URL do NOT reach a
-    // shell. If they did, `touch /tmp/pwned_research` would have created the
-    // file.
     assert!(
         !std::path::Path::new("/tmp/pwned_research").exists(),
-        "shell injection escaped argv boundary"
+        "shell injection bypassed argv boundary"
     );
-    // The fake postagent may or may not run depending on which route branch
-    // the URL matches (URL with trailing `"` may fall back to browser). Either
-    // outcome is safe. If it did run, argv_log exists with at least one line.
     if argv_log.exists() {
         let argv_text = fs::read_to_string(&argv_log).unwrap_or_default();
         assert!(argv_text.lines().count() > 0);
     }
+}
+
+#[test]
+fn percent_encoded_url_with_suspicious_chars_routes_cleanly() {
+    // Counterpart to argv_boundary_does_not_invoke_shell: when the URL is
+    // a *valid* (properly percent-encoded) string that happens to contain
+    // shell-looking bytes in its decoded form, the CLI should still route
+    // it without any shell expansion. With a non-matching host, it falls
+    // through to browser-fallback; the matcher must treat the string as
+    // opaque bytes.
+    let env = Env::new();
+    env.research(&["new", "t1", "--slug", "t1", "--json"]);
+    let ab = env.write_fake_bin(
+        "actionbook",
+        &fake_actionbook_happy("https://example.test/x", 800),
+    );
+
+    // %22 = " , %20 = space , %3B = ;
+    let encoded =
+        "https://example.test/x?arg=1%22%3B%20touch%20/tmp/pwned_encoded%3B%20echo%20%22";
+    let (v, code, _) = env.research_with_bins(
+        &["add", encoded, "--slug", "t1", "--json"],
+        None,
+        Some(ab.to_str().unwrap()),
+    );
+    // Router doesn't recognize example.test so it falls back to browser.
+    assert_eq!(code, 0);
+    assert_eq!(v["data"]["route_decision"]["executor"], "browser");
+    assert_eq!(v["data"]["fetch_success"], true);
+
+    assert!(
+        !std::path::Path::new("/tmp/pwned_encoded").exists(),
+        "decoded-looking metacharacters must not execute"
+    );
 }
 
 #[test]
