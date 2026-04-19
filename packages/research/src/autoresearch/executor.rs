@@ -124,7 +124,7 @@ pub async fn run(
         let coverage_before = coverage_json(slug, research_bin);
         let unread = collect_unread_sources(slug, 3, 2000);
         let system = system_prompt();
-        let user = user_prompt(slug, &coverage_before, &unread);
+        let user = user_prompt(slug, &coverage_before, &unread, iter, cfg.iterations);
 
         // ── Ask provider ──────────────────────────────────────────────
         let raw = match provider.ask(&system, &user).await {
@@ -362,12 +362,17 @@ Rules:
   `write_section` whose body contains `![{alt}](diagrams/{path})`.
 
 Workflow: plan → fetch → digest + write → mark diagrams.
-- First-iteration contract: on a fresh session with no `## Plan` section
+- First-iteration contract: on a FRESH session with no `## Plan` section
   yet, the loop accepts ONLY a `write_plan` action. Any other action is
   auto-rejected with `plan_required`. Keep the plan tight — one
   paragraph covering goal, source mix (arxiv + github + HN/blog),
-  estimated iteration count, and 2-3 milestones. The plan is pinned to
-  the top of every subsequent user prompt as the north star.
+  estimated iteration count, and 2-3 milestones.
+- IMPORTANT: once the plan exists (visible as a `# Plan` block at the
+  top of the user prompt — it appears from iteration 2 onward), DO NOT
+  emit `write_plan` again. The plan is there as a north star, not as a
+  prompt for you to re-author. Move to fetch/digest/write phases per
+  your own plan milestones. If the plan needs material revision emit
+  `write_plan` once with a full replacement; otherwise never.
 - The user prompt shows up to 3 `unread sources` (raw content truncated).
   Pick ONE per turn, write a section body that explains what the source
   says (with the URL as a markdown link), then emit a matching
@@ -393,17 +398,26 @@ alone produce a thin report.
     .to_string()
 }
 
-fn user_prompt(slug: &str, coverage: &Value, unread: &[UnreadSource]) -> String {
+fn user_prompt(
+    slug: &str,
+    coverage: &Value,
+    unread: &[UnreadSource],
+    iter: u32,
+    total_iters: u32,
+) -> String {
     let mut out = String::new();
 
     // v2: pin the `## Plan` at the top so the agent re-reads the
     // north-star every turn. Absent on first iteration only.
     if let Some(plan) = read_plan_body(slug) {
-        out.push_str("# Plan (your north star — re-read this every turn)\n\n");
+        out.push_str(
+            "# Plan (ALREADY WRITTEN — north star, do NOT emit write_plan again unless materially revising; fetch / digest / write per milestones instead)\n\n",
+        );
         out.push_str(&plan);
         out.push_str("\n\n---\n\n");
     }
 
+    out.push_str(&format!("iteration: {iter} of {total_iters}\n"));
     out.push_str(&format!("session: {slug}\n\n"));
     out.push_str("coverage:\n");
     out.push_str(&serde_json::to_string_pretty(coverage).unwrap_or_default());
