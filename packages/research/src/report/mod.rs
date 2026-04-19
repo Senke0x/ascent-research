@@ -8,4 +8,5 @@
 
 pub mod builder;
 pub mod markdown;
+pub mod sources;
 pub mod template;

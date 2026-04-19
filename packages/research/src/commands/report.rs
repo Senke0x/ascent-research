@@ -17,6 +17,7 @@ use std::time::Instant;
 
 use crate::output::Envelope;
 use crate::report::markdown::{self, RenderError};
+use crate::report::sources;
 use crate::report::template::{self, Slots};
 use crate::session::{active, config, layout};
 
@@ -123,18 +124,31 @@ pub fn run(slug_arg: Option<&str>, format: &str, open: bool, _no_open: bool) -> 
         }
     };
 
-    let warnings = rendered.warnings.clone();
+    // Phase C: build Sources section from session.jsonl (authoritative fact
+    // stream), not from the session.md sources block (human-readable cache).
+    let sources_section = sources::build_from_jsonl(&layout::session_jsonl(&slug));
+    let mut warnings = rendered.warnings.clone();
+    warnings.extend(sources_section.warnings.iter().cloned());
     let diagrams_inlined = rendered.diagrams_inlined;
+    let sources_count = sources_section.count;
+    let total_bytes = sources_section.total_bytes;
+
+    let session_footer = format!(
+        "Session · {} · {} accepted source{} · {} bytes",
+        session_dir.display(),
+        sources_count,
+        if sources_count == 1 { "" } else { "s" },
+        total_bytes,
+    );
 
     let slots = Slots {
         title: cfg.topic.clone(),
         subtitle,
         aside_quote: rendered.aside_html,
         body_html: rendered.body_html,
-        // Phase C fills this; Phase B still stubs sources.
-        sources_html: "<p><em>Source listing arrives in Phase C.</em></p>".into(),
+        sources_html: sources_section.html,
         generated_at: Utc::now().to_rfc3339(),
-        session_footer: session_dir.display().to_string(),
+        session_footer,
     };
 
     let html = template::render(&slots);
@@ -176,7 +190,9 @@ pub fn run(slug_arg: Option<&str>, format: &str, open: bool, _no_open: bool) -> 
             "open_skipped": open_skipped,
             "warnings": warnings,
             "diagrams_inlined": diagrams_inlined,
-            "phase": "B",
+            "sources_count": sources_count,
+            "total_bytes": total_bytes,
+            "phase": "C",
         }),
     )
     .with_context(json!({ "session": slug }))
