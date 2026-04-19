@@ -163,6 +163,29 @@ pub enum SessionEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
+
+    /// v2: an SVG passed `svg_safety::validate` and was written to
+    /// `<session>/diagrams/<path>`.
+    DiagramAuthored {
+        timestamp: DateTime<Utc>,
+        iteration: u32,
+        path: String,
+        bytes: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+
+    /// v2: an SVG failed `svg_safety::validate` or path safety — no file
+    /// was written. `reason` carries the specific rejection (script tag,
+    /// missing xmlns, oversize, path escape, etc.).
+    DiagramRejected {
+        timestamp: DateTime<Utc>,
+        iteration: u32,
+        path: String,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

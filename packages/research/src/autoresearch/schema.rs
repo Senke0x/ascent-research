@@ -80,6 +80,18 @@ pub enum Action {
     /// fresh session, this is the **only** action the loop accepts until
     /// the plan exists. Body is free-form markdown.
     WritePlan { body: String },
+
+    /// v2: author a verified SVG into `<session>/diagrams/<path>`. The
+    /// CLI runs `svg_safety::validate` and rejects anything with
+    /// `<script>`, `<foreignObject>`, `on*=` handlers, `javascript:` URLs,
+    /// or size > 512 KB. Accepted SVGs land on disk; the agent is
+    /// responsible for inserting the markdown reference via a separate
+    /// `write_section` that contains `![{alt}](diagrams/{path})`.
+    WriteDiagram {
+        path: String,
+        alt: String,
+        svg: String,
+    },
 }
 
 #[cfg(test)]
@@ -214,6 +226,29 @@ mod tests {
         let r: LoopResponse = serde_json::from_str(json).unwrap();
         assert!(r.actions.is_empty());
         assert!(!r.done);
+    }
+
+    #[test]
+    fn parses_write_diagram() {
+        let json = r#"{
+            "reasoning":"draw axis",
+            "actions":[{
+                "type":"write_diagram",
+                "path":"axis.svg",
+                "alt":"philosophy axis",
+                "svg":"<svg xmlns=\"http://www.w3.org/2000/svg\"/>"
+            }],
+            "done":false
+        }"#;
+        let r: LoopResponse = serde_json::from_str(json).unwrap();
+        match &r.actions[0] {
+            Action::WriteDiagram { path, alt, svg } => {
+                assert_eq!(path, "axis.svg");
+                assert_eq!(alt, "philosophy axis");
+                assert!(svg.contains("<svg"));
+            }
+            _ => panic!("expected WriteDiagram"),
+        }
     }
 
     #[test]

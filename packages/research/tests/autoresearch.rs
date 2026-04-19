@@ -448,6 +448,73 @@ fn loop_plan_satisfied_allows_other_actions_same_iter() {
     );
 }
 
+// v2 Step 3 — write_diagram action ────────────────────────────────────────
+
+// ── Test 13d: valid SVG lands on disk + emits diagram_authored ──────────
+
+#[test]
+fn loop_write_diagram_saves_svg_file() {
+    let env = Env::new();
+    env.prep("g1", "## Overview\nbase.\n");
+
+    // Raw-string-safe JSON: backslash-quotes inside the svg attribute are
+    // literal `\"` bytes on the wire, which JSON decodes back to `"`.
+    let payload = r###"{"reasoning":"draw","actions":[{"type":"write_diagram","path":"quad.svg","alt":"quadrant","svg":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect width=\"100\" height=\"100\"/></svg>"}],"done":false}"###;
+    let done = r_done("done");
+    let (v, code, stderr) = env.loop_cmd("g1", &[payload, done.as_str()], &[]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(v["data"]["actions_executed"], 1);
+
+    let svg_path = env.session_dir("g1").join("diagrams").join("quad.svg");
+    assert!(svg_path.is_file(), "validated SVG must be written to disk");
+    let body = fs::read_to_string(&svg_path).unwrap();
+    assert!(body.contains("<svg"));
+
+    let jsonl = fs::read_to_string(env.session_dir("g1").join("session.jsonl")).unwrap();
+    assert!(
+        jsonl.contains(r#""event":"diagram_authored""#),
+        "expected diagram_authored event"
+    );
+}
+
+// ── Test 13e: SVG containing <script> is rejected + diagram_rejected ────
+
+#[test]
+fn loop_write_diagram_rejects_script_tag() {
+    let env = Env::new();
+    env.prep("g2", "## Overview\nbase.\n");
+
+    let payload = r###"{"reasoning":"bad svg","actions":[{"type":"write_diagram","path":"bad.svg","alt":"x","svg":"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>"}],"done":false}"###;
+    let done = r_done("done");
+    let (v, code, _) = env.loop_cmd("g2", &[payload, done.as_str()], &[]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        v["data"]["actions_executed"], 0,
+        "hostile SVG must be rejected before any write"
+    );
+
+    let svg_path = env.session_dir("g2").join("diagrams").join("bad.svg");
+    assert!(!svg_path.exists(), "rejected SVG must not touch disk");
+
+    let jsonl = fs::read_to_string(env.session_dir("g2").join("session.jsonl")).unwrap();
+    assert!(
+        jsonl.contains(r#""event":"diagram_rejected""#),
+        "expected diagram_rejected event; got:\n{jsonl}"
+    );
+    let warnings: Vec<String> = v["data"]["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("svg_schema_violation") || w.contains("script")),
+        "expected svg_schema_violation warning; got: {warnings:?}"
+    );
+}
+
 // ── Test 14: re-digesting the same URL is rejected (proves filter wiring) ─
 
 #[test]

@@ -14,6 +14,7 @@
 pub mod executor;
 pub mod provider;
 pub mod schema;
+pub mod svg_safety;
 
 #[cfg(feature = "provider-claude")]
 pub mod claude;

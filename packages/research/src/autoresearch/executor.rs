@@ -24,6 +24,7 @@ use serde_json::{json, Value};
 
 use super::provider::{AgentProvider, ProviderError};
 use super::schema::{Action, LoopResponse};
+use super::svg_safety;
 use crate::session::event::SessionEvent;
 use crate::session::{layout, log};
 
@@ -185,6 +186,7 @@ pub async fn run(
         // in session.md yet, only `write_plan` is accepted. After a plan
         // lands mid-iter, subsequent actions this turn are free.
         let mut plan_required = iter == 1 && !session_has_plan(slug);
+        let mut diagrams_this_iter: u32 = 0;
 
         for action in &response.actions {
             if actions_executed_total + executed_this_round >= cfg.max_actions {
@@ -198,11 +200,21 @@ pub async fn run(
                 rejected_this_round += 1;
                 continue;
             }
+            if matches!(action, Action::WriteDiagram { .. }) && diagrams_this_iter >= 3 {
+                warnings.push(format!(
+                    "action_rejected_iter_{iter}: diagram_rate_limit — max 3 write_diagram per iteration"
+                ));
+                rejected_this_round += 1;
+                continue;
+            }
             match dispatch_action(action, slug, iter, cfg.dry_run, research_bin) {
                 Ok(()) => {
                     executed_this_round += 1;
                     if matches!(action, Action::WritePlan { .. }) {
                         plan_required = false;
+                    }
+                    if matches!(action, Action::WriteDiagram { .. }) {
+                        diagrams_this_iter += 1;
                     }
                 }
                 Err(reason) => {
@@ -328,6 +340,8 @@ Valid action shapes (each is an object with a "type" field):
   { "type": "note_diagram_needed", "name": "axis.svg", "hint": "what the diagram should show" }
   { "type": "digest_source", "url": "https://...", "into_section": "## 02 · WHAT" }
   { "type": "write_plan", "body": "Goal: …\nSources: arxiv+github+HN\nMilestones: iter 2 → fetch; iter 4 → draft" }
+  { "type": "write_diagram", "path": "axis.svg", "alt": "philosophy axis",
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 920 380\">…</svg>" }
 
 Rules:
 - "batch" requires a JSON array of URL strings named "urls" (plural). Even
@@ -338,6 +352,14 @@ Rules:
   space, middle dot U+00B7, space, TITLE in uppercase).
 - Never propose types outside the list above. Destructive operations
   (rm, close, delete) are not available.
+- `write_diagram` SVG constraints (enforced — rejection costs a warning):
+  size ≤ 512 KB; must start with `<svg` and declare
+  `xmlns="http://www.w3.org/2000/svg"`; must NOT contain `<script>`,
+  `<foreignObject>`, `on*=` handlers, or `javascript:` URLs. Max 3
+  `write_diagram` per turn. `path` is a bare filename ending in `.svg`
+  (no slashes, no `..`). The CLI writes to `<session>/diagrams/<path>`
+  but does NOT auto-insert the reference — you must also emit a
+  `write_section` whose body contains `![{alt}](diagrams/{path})`.
 
 Workflow: plan → fetch → digest + write → mark diagrams.
 - First-iteration contract: on a fresh session with no `## Plan` section
@@ -539,6 +561,9 @@ fn dispatch_action(
             digest_source(slug, iteration, url, into_section)
         }
         Action::WritePlan { body } => write_plan(slug, iteration, body),
+        Action::WriteDiagram { path, alt, svg } => {
+            write_diagram(slug, iteration, path, alt, svg)
+        }
     }
 }
 
@@ -634,6 +659,74 @@ fn write_section(slug: &str, heading: &str, body: &str) -> Result<(), String> {
 /// its body is replaced. Otherwise the block is inserted after the
 /// `## Overview` body (before the first numbered section). Always emits
 /// a `PlanWritten` event.
+/// v2: validate SVG safety + path sanity, then write to
+/// `<session>/diagrams/<path>`. On any rejection, emit a `DiagramRejected`
+/// event and return Err so the loop records an `action_rejected` warning.
+/// On success, emit `DiagramAuthored`. Caller is responsible for placing
+/// the `![alt](diagrams/path)` markdown reference via a separate
+/// `write_section` — we do not auto-insert.
+fn write_diagram(
+    slug: &str,
+    iteration: u32,
+    path: &str,
+    _alt: &str,
+    svg: &str,
+) -> Result<(), String> {
+    let reject = |reason: &str| {
+        let _ = log::append(
+            slug,
+            &SessionEvent::DiagramRejected {
+                timestamp: Utc::now(),
+                iteration,
+                path: path.to_string(),
+                reason: reason.to_string(),
+                note: None,
+            },
+        );
+    };
+
+    // Path safety: simple filename inside diagrams/, must end .svg.
+    if path.is_empty()
+        || path.contains("..")
+        || path.contains('/')
+        || path.contains('\\')
+        || path.starts_with('.')
+    {
+        let reason = "path_escapes_diagrams_dir";
+        reject(reason);
+        return Err(format!("svg_path_rejected: {reason} (path={path})"));
+    }
+    if !path.to_lowercase().ends_with(".svg") {
+        let reason = "path_not_svg";
+        reject(reason);
+        return Err(format!("svg_path_rejected: {reason} (path={path})"));
+    }
+
+    if let Err(rej) = svg_safety::validate(svg) {
+        let reason = rej.to_string();
+        reject(&reason);
+        return Err(format!("svg_schema_violation: {reason} (path={path})"));
+    }
+
+    let diagrams_dir = layout::session_dir(slug).join("diagrams");
+    std::fs::create_dir_all(&diagrams_dir)
+        .map_err(|e| format!("mkdir diagrams: {e}"))?;
+    let target = diagrams_dir.join(path);
+    std::fs::write(&target, svg).map_err(|e| format!("write svg: {e}"))?;
+
+    log::append(
+        slug,
+        &SessionEvent::DiagramAuthored {
+            timestamp: Utc::now(),
+            iteration,
+            path: path.to_string(),
+            bytes: svg.len() as u32,
+            note: None,
+        },
+    )
+    .map_err(|e| format!("append DiagramAuthored: {e}"))
+}
+
 fn write_plan(slug: &str, iteration: u32, body: &str) -> Result<(), String> {
     let path = layout::session_md(slug);
     let md = std::fs::read_to_string(&path).map_err(|e| format!("read session.md: {e}"))?;
