@@ -308,3 +308,88 @@ fn loop_session_not_found() {
     assert_ne!(code, 0);
     assert_eq!(v["error"]["code"], "SESSION_NOT_FOUND");
 }
+
+// v2 Step 1 — Per-source digestion ────────────────────────────────────────
+
+/// Pre-seed a `source_accepted` jsonl line so `digest_source` has something
+/// legal to target. Returns nothing; test uses `url` to verify side effects.
+fn seed_accepted(env: &Env, slug: &str, url: &str) {
+    use std::io::Write;
+    let line = format!(
+        r#"{{"event":"source_accepted","timestamp":"2026-04-19T12:00:00Z","url":"{url}","kind":"arxiv-abs","executor":"postagent","raw_path":"raw/1-arxiv.json","bytes":1000,"trust_score":2.0}}"#
+    );
+    let path = env.session_dir(slug).join("session.jsonl");
+    let mut f = fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("open session.jsonl for append");
+    writeln!(f, "{line}").unwrap();
+}
+
+// ── Test 12: digest_source writes source_digested event ──────────────────
+
+#[test]
+fn loop_digest_source_writes_jsonl_event() {
+    let env = Env::new();
+    env.prep("d1", "## Overview\nbase.\n");
+    let url = "https://arxiv.org/abs/2401.12345";
+    seed_accepted(&env, "d1", url);
+
+    let digest = format!(
+        r###"{{"reasoning":"digest paper","actions":[{{"type":"digest_source","url":"{url}","into_section":"## 02 · WHAT"}}],"done":false}}"###
+    );
+    let done = r_done("done");
+    let (v, code, stderr) = env.loop_cmd("d1", &[digest.as_str(), done.as_str()], &[]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(v["data"]["actions_executed"], 1);
+
+    let jsonl = fs::read_to_string(env.session_dir("d1").join("session.jsonl")).unwrap();
+    assert!(
+        jsonl.contains(r#""event":"source_digested""#),
+        "expected source_digested event in jsonl; got:\n{jsonl}"
+    );
+    assert!(jsonl.contains(url), "digest event should carry the URL");
+    assert!(
+        jsonl.contains(r###""into_section":"## 02 · WHAT""###),
+        "into_section should be preserved"
+    );
+}
+
+// ── Test 13: re-digesting the same URL is rejected (proves filter wiring) ─
+
+#[test]
+fn loop_subsequent_iter_sees_digested_sources_excluded() {
+    let env = Env::new();
+    env.prep("d2", "## Overview\nbase.\n");
+    let url = "https://arxiv.org/abs/2401.99999";
+    seed_accepted(&env, "d2", url);
+
+    let digest = format!(
+        r###"{{"reasoning":"first digest","actions":[{{"type":"digest_source","url":"{url}","into_section":"## 01"}}],"done":false}}"###
+    );
+    let digest_again = format!(
+        r###"{{"reasoning":"retry","actions":[{{"type":"digest_source","url":"{url}","into_section":"## 01"}}],"done":false}}"###
+    );
+    let done = r_done("done");
+    let (v, code, stderr) = env.loop_cmd(
+        "d2",
+        &[digest.as_str(), digest_again.as_str(), done.as_str()],
+        &["--iterations", "3"],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // First digest succeeds, second rejected — total executed = 1.
+    assert_eq!(
+        v["data"]["actions_executed"], 1,
+        "second digest_source on same URL must be rejected"
+    );
+    let warnings: Vec<String> = v["data"]["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        warnings.iter().any(|w| w.contains("source_already_digested")),
+        "expected source_already_digested warning; got: {warnings:?}"
+    );
+}

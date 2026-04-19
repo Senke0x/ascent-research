@@ -61,6 +61,19 @@ pub enum Action {
     /// The CLI does NOT try to draw SVGs; it only notes the gap so the
     /// next iteration (or a human) can fill it in.
     NoteDiagramNeeded { name: String, hint: String },
+
+    /// v2: mark a previously-fetched source as digested into the report.
+    /// Pairs with a `WriteSection` (which writes the actual content and
+    /// cites the URL). Digested URLs are filtered out of the
+    /// "unread sources" block in future prompts so the agent doesn't
+    /// re-summarize the same paper every iteration.
+    DigestSource {
+        url: String,
+        /// The section heading where this source's content was folded in.
+        /// Purely informational — stored in the `SourceDigested` event
+        /// for audit. Example: "## 02 · WHAT EVOLVES".
+        into_section: String,
+    },
 }
 
 #[cfg(test)]
@@ -195,6 +208,27 @@ mod tests {
         let r: LoopResponse = serde_json::from_str(json).unwrap();
         assert!(r.actions.is_empty());
         assert!(!r.done);
+    }
+
+    #[test]
+    fn parses_digest_source() {
+        let json = r###"{
+            "reasoning":"digested paper X into WHAT section",
+            "actions":[{
+                "type":"digest_source",
+                "url":"https://arxiv.org/abs/2404.11018",
+                "into_section":"## 02 · WHAT EVOLVES"
+            }],
+            "done":false
+        }"###;
+        let r: LoopResponse = serde_json::from_str(json).unwrap();
+        match &r.actions[0] {
+            Action::DigestSource { url, into_section } => {
+                assert!(url.contains("arxiv.org"));
+                assert!(into_section.starts_with("## 02"));
+            }
+            _ => panic!("expected DigestSource"),
+        }
     }
 
     #[test]

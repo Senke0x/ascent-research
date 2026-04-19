@@ -139,6 +139,19 @@ pub enum SessionEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
+
+    /// v2: a previously-fetched source has been digested into a specific
+    /// section of session.md. Subsequent prompt builds filter these URLs
+    /// out of the "unread sources" block so Claude doesn't re-summarize
+    /// the same paper every iteration.
+    SourceDigested {
+        timestamp: DateTime<Utc>,
+        iteration: u32,
+        url: String,
+        into_section: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

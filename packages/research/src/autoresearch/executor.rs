@@ -121,8 +121,9 @@ pub async fn run(
 
         // ── Build prompts from session state ──────────────────────────
         let coverage_before = coverage_json(slug, research_bin);
+        let unread = collect_unread_sources(slug, 3, 2000);
         let system = system_prompt();
-        let user = user_prompt(slug, &coverage_before);
+        let user = user_prompt(slug, &coverage_before, &unread);
 
         // ── Ask provider ──────────────────────────────────────────────
         let raw = match provider.ask(&system, &user).await {
@@ -185,7 +186,7 @@ pub async fn run(
                 termination = TerminationReason::MaxActionsExhausted;
                 break;
             }
-            match dispatch_action(action, slug, cfg.dry_run, research_bin) {
+            match dispatch_action(action, slug, iter, cfg.dry_run, research_bin) {
                 Ok(()) => executed_this_round += 1,
                 Err(reason) => {
                     warnings.push(format!(
@@ -308,6 +309,7 @@ Valid action shapes (each is an object with a "type" field):
   { "type": "write_overview", "body": "2-4 paragraph markdown overview" }
   { "type": "write_aside", "body": "short italic epigraph text" }
   { "type": "note_diagram_needed", "name": "axis.svg", "hint": "what the diagram should show" }
+  { "type": "digest_source", "url": "https://...", "into_section": "## 02 · WHAT" }
 
 Rules:
 - "batch" requires a JSON array of URL strings named "urls" (plural). Even
@@ -318,17 +320,120 @@ Rules:
   space, middle dot U+00B7, space, TITLE in uppercase).
 - Never propose types outside the list above. Destructive operations
   (rm, close, delete) are not available.
-- Prefer fetching sources first, then writing sections, then marking
-  diagrams. Coverage blockers tell you what's missing.
+
+Workflow: plan → fetch → digest + write → mark diagrams.
+- The user prompt shows up to 3 `unread sources` (raw content truncated).
+  Pick ONE per turn, write a section body that explains what the source
+  says (with the URL as a markdown link), then emit a matching
+  `digest_source` action so the next turn's prompt excludes it. Without
+  a `digest_source`, the same source will keep reappearing.
+- `into_section` must match the `heading` of a WriteSection you just
+  wrote (or an existing section). Use this to link the source to its
+  landing place in the narrative.
+
+Source diversity. The CLI routes these kinds efficiently without a browser:
+  - arxiv.org/abs/{id}                          → paper abstract (fast)
+  - github.com/{owner}/{repo}                   → README via API
+  - github.com/{owner}/{repo}/blob/{ref}/{path} → raw file content
+  - github.com/{owner}/{repo}/tree/{ref}/{path} → directory listing
+  - news.ycombinator.com/item?id={N}            → HN item JSON
+  - anything else                               → browser fallback (slower)
+
+For "survey" or "ecosystem" topics, diversify: propose URLs spanning
+≥ 3 of the above kinds. Specifically consider top github repos
+(trending/starred) and HN discussion threads, not only papers. Papers
+alone produce a thin report.
 "###
     .to_string()
 }
 
-fn user_prompt(slug: &str, coverage: &Value) -> String {
-    format!(
-        "session: {slug}\n\ncoverage:\n{}\n\nDecide the next actions.",
-        serde_json::to_string_pretty(coverage).unwrap_or_default()
-    )
+fn user_prompt(slug: &str, coverage: &Value, unread: &[UnreadSource]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("session: {slug}\n\n"));
+    out.push_str("coverage:\n");
+    out.push_str(&serde_json::to_string_pretty(coverage).unwrap_or_default());
+    out.push_str("\n\n");
+
+    if !unread.is_empty() {
+        out.push_str("unread sources (fetched but not yet digested — pick one per turn,\n");
+        out.push_str("write a finding that cites the URL, and emit a `digest_source` action):\n\n");
+        for (i, u) in unread.iter().enumerate() {
+            out.push_str(&format!(
+                "--- {} / {} ---\n",
+                i + 1,
+                unread.len()
+            ));
+            out.push_str(&format!("url: {}\nkind: {}\n", u.url, u.kind));
+            out.push_str("raw (truncated):\n");
+            out.push_str(&u.snippet);
+            out.push_str("\n\n");
+        }
+    } else {
+        out.push_str("(no unread sources — all accepted sources have been digested)\n\n");
+    }
+
+    out.push_str("Decide the next actions.\n");
+    out
+}
+
+#[derive(Debug, Clone)]
+struct UnreadSource {
+    url: String,
+    kind: String,
+    snippet: String,
+}
+
+/// Gather accepted sources whose URL hasn't already been recorded in a
+/// `source_digested` event. Returns at most `limit` entries, each with
+/// the raw file contents UTF-8-safe-truncated to `max_bytes` chars.
+fn collect_unread_sources(slug: &str, limit: usize, max_bytes: usize) -> Vec<UnreadSource> {
+    let events = log::read_all(slug).unwrap_or_default();
+    let mut digested: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for e in &events {
+        if let SessionEvent::SourceDigested { url, .. } = e {
+            digested.insert(url.clone());
+        }
+    }
+    let mut out = Vec::new();
+    for e in &events {
+        if let SessionEvent::SourceAccepted {
+            url,
+            kind,
+            raw_path,
+            ..
+        } = e
+        {
+            if digested.contains(url) {
+                continue;
+            }
+            let full_path = layout::session_dir(slug).join(raw_path);
+            let snippet = match std::fs::read_to_string(&full_path) {
+                Ok(s) => truncate_utf8_safe(&s, max_bytes),
+                Err(_) => "(raw file not readable)".to_string(),
+            };
+            out.push(UnreadSource {
+                url: url.clone(),
+                kind: kind.clone(),
+                snippet,
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn truncate_utf8_safe(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    // Back off to the nearest char boundary.
+    let mut end = max;
+    while !s.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    format!("{}\n… [truncated at {} chars]", &s[..end], end)
 }
 
 fn coverage_json(slug: &str, research_bin: &Path) -> Value {
@@ -377,6 +482,7 @@ fn coverage_signature(coverage: &Value) -> String {
 fn dispatch_action(
     action: &Action,
     slug: &str,
+    iteration: u32,
     dry_run: bool,
     research_bin: &Path,
 ) -> Result<(), String> {
@@ -395,7 +501,43 @@ fn dispatch_action(
         }
         Action::WriteAside { body } => write_aside(slug, body),
         Action::NoteDiagramNeeded { name, hint } => append_diagram_todo(slug, name, hint),
+        Action::DigestSource { url, into_section } => {
+            digest_source(slug, iteration, url, into_section)
+        }
     }
+}
+
+fn digest_source(slug: &str, iteration: u32, url: &str, into_section: &str) -> Result<(), String> {
+    // Validate: URL must be among accepted sources (don't let the agent
+    // digest URLs it never fetched — that'd be hallucination).
+    let events = log::read_all(slug).unwrap_or_default();
+    let known = events.iter().any(|e| matches!(
+        e,
+        SessionEvent::SourceAccepted { url: u, .. } if u == url
+    ));
+    if !known {
+        return Err(format!(
+            "digest_source for '{url}' but that URL is not in source_accepted events"
+        ));
+    }
+    let already = events.iter().any(|e| matches!(
+        e,
+        SessionEvent::SourceDigested { url: u, .. } if u == url
+    ));
+    if already {
+        return Err(format!("source_already_digested: {url}"));
+    }
+    log::append(
+        slug,
+        &SessionEvent::SourceDigested {
+            timestamp: Utc::now(),
+            iteration,
+            url: url.to_string(),
+            into_section: into_section.to_string(),
+            note: None,
+        },
+    )
+    .map_err(|e| format!("append SourceDigested: {e}"))
 }
 
 fn run_add(research_bin: &Path, slug: &str, url: &str) -> Result<(), String> {
