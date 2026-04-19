@@ -168,6 +168,23 @@ pub enum Commands {
     },
     /// Coverage: fact-based completeness stats + report_ready blockers.
     Coverage { slug: Option<String> },
+    /// Run the autonomous research loop (feature: autoresearch).
+    #[cfg(feature = "autoresearch")]
+    Loop {
+        slug: Option<String>,
+        /// LLM provider: fake | claude | codex.
+        #[arg(long, default_value = "fake")]
+        provider: String,
+        #[arg(long)]
+        iterations: Option<u32>,
+        #[arg(long = "max-actions")]
+        max_actions: Option<u32>,
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// (fake provider only) semicolon-separated JSON responses to replay.
+        #[arg(long = "fake-responses")]
+        fake_responses: Option<String>,
+    },
     /// Show help (alias of --help).
     Help,
 }
@@ -281,6 +298,24 @@ fn dispatch(cmd: Commands) -> Envelope {
         Commands::Series { tag, open } => commands::series::run(&tag, open),
         Commands::Diff { slug, unused_only } => commands::diff::run(slug.as_deref(), unused_only),
         Commands::Coverage { slug } => commands::coverage::run(slug.as_deref()),
+        #[cfg(feature = "autoresearch")]
+        Commands::Loop {
+            slug,
+            provider,
+            iterations,
+            max_actions,
+            dry_run,
+            fake_responses,
+        } => commands::loop_cmd::run(
+            slug.as_deref(),
+            &provider,
+            iterations,
+            max_actions,
+            dry_run,
+            fake_responses
+                .as_deref()
+                .map(|s| s.split('\u{1e}').map(str::to_string).collect()),
+        ),
         Commands::Help => unreachable!("Help handled in run()"),
     }
 }

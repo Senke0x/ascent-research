@@ -105,6 +105,40 @@ pub enum SessionEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
+
+    // ── Autoresearch loop events ─────────────────────────────────────────
+    // These are written only when `research loop` is invoked (feature:
+    // autoresearch), but live in the canonical SessionEvent enum so the
+    // event log stays closed — readers match all variants exhaustively.
+    LoopStarted {
+        timestamp: DateTime<Utc>,
+        provider: String,
+        iterations: u32,
+        max_actions: u32,
+        dry_run: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+    LoopStep {
+        timestamp: DateTime<Utc>,
+        iteration: u32,
+        reasoning: String,
+        actions_requested: u32,
+        actions_executed: u32,
+        actions_rejected: u32,
+        duration_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+    LoopCompleted {
+        timestamp: DateTime<Utc>,
+        reason: String,
+        iterations_run: u32,
+        actions_executed_total: u32,
+        report_ready: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

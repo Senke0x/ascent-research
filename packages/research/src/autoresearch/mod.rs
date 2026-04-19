@@ -11,6 +11,7 @@
 //! A `FakeProvider` is always compiled under `autoresearch` so tests never
 //! touch a real LLM.
 
+pub mod executor;
 pub mod provider;
 pub mod schema;
 
