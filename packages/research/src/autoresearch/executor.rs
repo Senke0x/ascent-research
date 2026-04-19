@@ -151,7 +151,17 @@ pub async fn run(
         let response: LoopResponse = match parse_response(&raw) {
             Ok(r) => r,
             Err(e) => {
-                warnings.push(format!("schema_violation_iter_{iter}: {e}"));
+                // Include a short snippet of the raw response in the
+                // warning so the user can see what Claude/Codex actually
+                // returned when the schema fails.
+                let snippet: String = raw
+                    .chars()
+                    .take(160)
+                    .collect::<String>()
+                    .replace('\n', "\\n");
+                warnings.push(format!(
+                    "schema_violation_iter_{iter}: {e}; raw[0..160]={snippet}"
+                ));
                 append_step(
                     slug,
                     iter,
@@ -276,14 +286,41 @@ fn parse_response(raw: &str) -> Result<LoopResponse, String> {
 }
 
 fn system_prompt() -> String {
-    concat!(
-        "You are an assistant driving a research CLI. ",
-        "Each turn you return STRICT JSON with fields: reasoning (string), ",
-        "actions (array), done (bool), reason (string, required when done). ",
-        "Actions have type in {add, batch, write_section, write_overview, ",
-        "write_aside, note_diagram_needed}. Never propose other types. ",
-        "Do not wrap the JSON in prose. Do not propose destructive actions.",
-    )
+    r###"You drive a research CLI. Each turn respond with STRICT JSON matching
+this exact schema — no prose before or after, no code fences, nothing but
+the JSON object:
+
+{
+  "reasoning": "<one or two sentences>",
+  "actions": [ ...action objects... ],
+  "done": false,
+  "reason": null
+}
+
+Set "done": true and a non-null "reason" string when the coverage blockers
+are cleared or no further action is useful.
+
+Valid action shapes (each is an object with a "type" field):
+
+  { "type": "add", "url": "https://example.com/..." }
+  { "type": "batch", "urls": ["https://a.test/", "https://b.test/"], "concurrency": 4 }
+  { "type": "write_section", "heading": "## 01 · WHY", "body": "markdown body..." }
+  { "type": "write_overview", "body": "2-4 paragraph markdown overview" }
+  { "type": "write_aside", "body": "short italic epigraph text" }
+  { "type": "note_diagram_needed", "name": "axis.svg", "hint": "what the diagram should show" }
+
+Rules:
+- "batch" requires a JSON array of URL strings named "urls" (plural). Even
+  if you want one URL, use { "type": "add", "url": "..." } instead, never
+  { "type": "batch", "url": "..." }.
+- "concurrency" in batch is optional; default is 4 if omitted.
+- Section headings must use "## NN · TITLE" format (two-digit number,
+  space, middle dot U+00B7, space, TITLE in uppercase).
+- Never propose types outside the list above. Destructive operations
+  (rm, close, delete) are not available.
+- Prefer fetching sources first, then writing sections, then marking
+  diagrams. Coverage blockers tell you what's missing.
+"###
     .to_string()
 }
 
