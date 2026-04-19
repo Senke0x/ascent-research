@@ -118,10 +118,22 @@ Rules:
   surfaced in the envelope).
 - Alt text becomes `<p class="caption">…</p>` under the diagram.
 
-For diagram design (colors, fonts, primitives) use the `diagram-design`
-skill at `~/.claude/skills/diagram-design/SKILL.md`. The template's
-CSS is tuned for the skill's stone+rust default tokens. If you use
-those defaults, no extra CSS is needed.
+For design tokens (palette hex, fonts, node/arrow/legend primitives),
+read **[diagram-primitives.md](./diagram-primitives.md)** in this same
+directory. It is self-contained — no external dependency — and covers
+everything needed to hand-author an SVG that the rich-html template
+will render without warnings.
+
+The upstream [`diagram-design`](https://github.com/cathrynlavery/diagram-design)
+skill is **optional**. Install it at `~/.claude/skills/diagram-design/`
+only when you need:
+- a diagram type `diagram-primitives.md` doesn't cover (ER, swimlane,
+  venn, pyramid, tree, etc.)
+- the annotation / sketchy editorial variants
+- the URL-based re-skin onboarding flow
+
+Our template's CSS is pinned to the stone+rust tokens listed in
+`diagram-primitives.md`. Do not switch palettes without updating both.
 
 ### Which diagram for which report
 
@@ -214,8 +226,10 @@ Warnings (non-fatal; shown in `envelope.data.warnings`):
   will not regenerate. If you find yourself hand-editing the output
   HTML, stop and put the change back in session.md instead.
 - **Diagrams for every report.** Non-negotiable. The CLI does not draw
-  SVGs — use the `diagram-design` skill or write them by hand. Save
-  files under `diagrams/`, let the CLI inline them.
+  SVGs — follow `diagram-primitives.md` (in this directory, self-contained)
+  and save files under `diagrams/`. The upstream `diagram-design` skill
+  is an optional superset; the repo-local primitives are sufficient for
+  architecture, quadrant, timeline, and flow diagrams.
 - **Multiple formats, one source.** `rich-html` is the v1 target. Future
   `--format brief-md` / `slides-reveal` / `json-export` will consume
   the same session.md; your conventions carry over.
