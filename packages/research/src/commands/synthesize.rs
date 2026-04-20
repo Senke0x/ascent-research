@@ -19,7 +19,7 @@ use crate::session::{
 
 const CMD: &str = "research synthesize";
 
-pub fn run(slug_arg: Option<&str>, no_render: bool, open: bool) -> Envelope {
+pub fn run(slug_arg: Option<&str>, no_render: bool, open: bool, bilingual: bool) -> Envelope {
     let slug = match slug_arg {
         Some(s) => s.to_string(),
         None => match active::get_active() {
@@ -124,7 +124,7 @@ pub fn run(slug_arg: Option<&str>, no_render: bool, open: bool) -> Envelope {
     let mut render_error: Option<String> = None;
     let mut render_warnings: Vec<String> = Vec::new();
     if !no_render {
-        match render_rich_html(&slug, &md, &cfg.topic, &cfg.tags, &cfg.preset) {
+        match render_rich_html(&slug, &md, &cfg.topic, &cfg.tags, &cfg.preset, bilingual) {
             Ok((html_path, warnings)) => {
                 report_html_path = Some(rel_path(&html_path));
                 render_warnings = warnings;
@@ -217,6 +217,7 @@ fn render_rich_html(
     topic: &str,
     tags: &[String],
     preset: &str,
+    bilingual: bool,
 ) -> Result<(PathBuf, Vec<String>), String> {
     let session_dir = layout::session_dir(slug);
     let rendered = markdown::render_body(md, &session_dir).map_err(|e| match e {
@@ -228,6 +229,23 @@ fn render_rich_html(
     let sources_section = sources::build_from_jsonl(&layout::session_jsonl(slug));
     let mut warnings = rendered.warnings.clone();
     warnings.extend(sources_section.warnings.iter().cloned());
+
+    let body_html = if bilingual {
+        match crate::report::bilingual::inject_zh_translations(&rendered.body_html) {
+            Ok((augmented, note)) => {
+                if let Some(n) = note {
+                    warnings.push(n);
+                }
+                augmented
+            }
+            Err(e) => {
+                warnings.push(format!("bilingual_skipped: {e}"));
+                rendered.body_html.clone()
+            }
+        }
+    } else {
+        rendered.body_html.clone()
+    };
 
     let tags_str = if tags.is_empty() {
         String::new()
@@ -249,7 +267,7 @@ fn render_rich_html(
         title: topic.to_string(),
         subtitle,
         aside_quote: rendered.aside_html,
-        body_html: rendered.body_html,
+        body_html,
         sources_html: sources_section.html,
         generated_at: Utc::now().to_rfc3339(),
         session_footer,

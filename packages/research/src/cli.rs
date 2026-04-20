@@ -117,6 +117,11 @@ pub enum Commands {
         no_render: bool,
         #[arg(long)]
         open: bool,
+        /// Also render Chinese translations next to each English paragraph
+        /// in report.html. Requires a working Claude provider (cc-sdk).
+        /// Costs tokens proportional to report length.
+        #[arg(long)]
+        bilingual: bool,
     },
     /// Render an editorial report from a session (rich-html and future formats).
     Report {
@@ -277,8 +282,8 @@ fn dispatch(cmd: Commands) -> Envelope {
             min_bytes,
             on_short_body.as_deref(),
         ),
-        Commands::Synthesize { slug, no_render, open } => {
-            commands::synthesize::run(slug.as_deref(), no_render, open)
+        Commands::Synthesize { slug, no_render, open, bilingual } => {
+            commands::synthesize::run(slug.as_deref(), no_render, open, bilingual)
         }
         Commands::Report { slug, format, open, no_open, stdout, output } => {
             commands::report::run(
