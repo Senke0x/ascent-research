@@ -132,6 +132,18 @@ fi
 section "Event breakdown"
 grep -oE '"event":"[a-z_]+"' "$JSONL" | sort | uniq -c
 
+section "Render — research synthesize → report.html"
+"$RESEARCH_BIN" synthesize "$SLUG" --json > /tmp/l4_syn.json
+if jq -e '.ok == true' /tmp/l4_syn.json >/dev/null; then
+  REPORT_HTML="$TEST_HOME/$SLUG/report.html"
+  REPORT_BYTES=$(wc -c < "$REPORT_HTML" | tr -d ' ')
+  pass "report.html rendered ($REPORT_BYTES bytes)"
+  echo "     open $REPORT_HTML"
+else
+  cat /tmp/l4_syn.json
+  fail "synthesize failed"
+fi
+
 section "Summary"
 if [ "$AUTHORED" -lt 2 ]; then
   printf "\n\033[33mL4 pass (with soft warning on diagrams=%d < 2)\033[0m\n" "$AUTHORED"
