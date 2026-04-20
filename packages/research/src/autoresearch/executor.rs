@@ -187,6 +187,12 @@ pub async fn run(
         // lands mid-iter, subsequent actions this turn are free.
         let mut plan_required = iter == 1 && !session_has_plan(slug);
         let mut diagrams_this_iter: u32 = 0;
+        // Snapshot at turn start: how many sources are fetched-but-not-
+        // digested. If > 0 we reject `add`/`batch` — the agent must work
+        // through the queue first. This is a code-level reinforcement of
+        // the prompt rule, because "please digest first" is easy to
+        // ignore when the plan says "fetch on iter 2-3".
+        let unread_at_turn_start = unread.len();
 
         for action in &response.actions {
             if actions_executed_total + executed_this_round >= cfg.max_actions {
@@ -196,6 +202,15 @@ pub async fn run(
             if plan_required && !matches!(action, Action::WritePlan { .. }) {
                 warnings.push(format!(
                     "action_rejected_iter_{iter}: plan_required — first iteration must emit a write_plan before any other action"
+                ));
+                rejected_this_round += 1;
+                continue;
+            }
+            if unread_at_turn_start > 0
+                && matches!(action, Action::Add { .. } | Action::Batch { .. })
+            {
+                warnings.push(format!(
+                    "action_rejected_iter_{iter}: unread_queue_nonempty — {unread_at_turn_start} accepted source(s) still undigested; digest those before fetching more"
                 ));
                 rejected_this_round += 1;
                 continue;
@@ -431,6 +446,10 @@ fn user_prompt(
     out.push_str("\n\n");
 
     if !unread.is_empty() {
+        out.push_str(&format!(
+            "⚠ {} unread accepted source(s) below — DIGEST ONE NOW. Do NOT emit an `add` or `batch` action until the unread queue is empty; the sources are already on disk and fetching more is wasted work. The raw snippet may look thin but it's real HTML/JSON — grep it for titles, links, headings, and github references before concluding it's unusable. You have no authority to skip a URL.\n\n",
+            unread.len()
+        ));
         out.push_str("unread sources (fetched but not yet digested — pick one per turn,\n");
         out.push_str("write a finding that cites the URL, and emit a `digest_source` action):\n\n");
         for (i, u) in unread.iter().enumerate() {
