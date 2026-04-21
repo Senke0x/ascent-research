@@ -641,7 +641,11 @@ fn coverage_json(slug: &str, research_bin: &Path) -> Value {
 
 fn coverage_signature(coverage: &Value) -> String {
     // Deterministic fingerprint of the numeric fields only — prose changes
-    // don't count toward divergence.
+    // don't count toward divergence. v3: `wiki_pages` is included so a
+    // loop that only writes wiki pages (the preferred ingest surface)
+    // is still recognized as making progress. Without this, wiki-first
+    // sessions hit a false-positive "diverged" termination as soon as
+    // three wiki writes land without a numbered section.
     let keys = [
         "overview_chars",
         "numbered_sections_count",
@@ -653,6 +657,8 @@ fn coverage_signature(coverage: &Value) -> String {
         "sources_referenced_in_body",
         "sources_unused",
         "sources_hallucinated",
+        "wiki_pages",
+        "wiki_pages_with_frontmatter",
     ];
     keys.iter()
         .map(|k| format!("{k}={}", coverage.get(k).unwrap_or(&Value::Null)))
@@ -1171,6 +1177,20 @@ mod tests {
     fn coverage_signature_differs_when_any_field_changes() {
         let a = json!({"overview_chars": 100, "numbered_sections_count": 3});
         let b = json!({"overview_chars": 200, "numbered_sections_count": 3});
+        assert_ne!(coverage_signature(&a), coverage_signature(&b));
+    }
+
+    #[test]
+    fn coverage_signature_tracks_wiki_pages_so_wiki_writes_count_as_progress() {
+        // v3 regression guard: before wiki_pages was part of the
+        // signature, a session that produced 3 wiki pages in 3 turns
+        // (with the rest of coverage unchanged) fingerprinted
+        // identically on each turn and the divergence detector fired
+        // a false-positive "diverged" termination. The smoke run on
+        // tokio-v3 caught this. Adding wiki_pages means writing pages
+        // is a legitimate progress signal.
+        let a = json!({"wiki_pages": 1, "overview_chars": 0, "numbered_sections_count": 0});
+        let b = json!({"wiki_pages": 2, "overview_chars": 0, "numbered_sections_count": 0});
         assert_ne!(coverage_signature(&a), coverage_signature(&b));
     }
 
