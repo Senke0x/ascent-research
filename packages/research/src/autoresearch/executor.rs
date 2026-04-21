@@ -410,6 +410,17 @@ FIGURE-RICH CONTRACT (non-negotiable, v3):
   * If a previous turn left a dangling `diagrams/x.svg` reference,
     the user prompt will surface it as an "⚠ UNRESOLVED DIAGRAM
     REFERENCE" block — fix it THAT TURN, before any other action.
+  * NEVER drop a diagram reference when overwriting a section. If a
+    section body currently contains `![](diagrams/x.svg)` and you are
+    rewriting that section, EITHER keep the reference in place OR
+    relocate it to another section in the same turn. Silently
+    overwriting a section-with-reference is what creates orphan SVGs
+    that the reader can't find near the relevant prose.
+  * If a previous turn orphaned an SVG (file on disk, no reference
+    anywhere), the user prompt will surface it as an "⚠ ORPHAN
+    DIAGRAM FILE" block — use `write_section` to insert the reference
+    into a semantically relevant section, don't emit a new
+    `write_diagram` for the same path.
 
 Workflow: plan → fetch → digest + write → mark diagrams.
 - First-iteration contract: on a FRESH session with no `## Plan` section
@@ -548,6 +559,25 @@ fn user_prompt(
         );
     }
 
+    // v3: orphan SVGs — already written to disk, not yet referenced
+    // anywhere in prose or wiki. The bidirectional contract says every
+    // `write_diagram` needs a paired `![](diagrams/x.svg)` in a section
+    // body so the reader sees the figure inline with its explanation.
+    // Otherwise the renderer drops it in a fallback "Supplementary
+    // figures" block at the bottom of the report, disconnected from
+    // the narrative it was drawn to explain.
+    let orphans = orphan_diagram_files(slug);
+    if !orphans.is_empty() {
+        out.push_str(&format!(
+            "⚠ {} ORPHAN DIAGRAM FILE(S) — these SVG files are on disk but NOT referenced from session.md or any wiki page. Emit `write_section` THIS TURN to insert `![alt](diagrams/<file>)` into a relevant numbered section (or edit an existing section). Do NOT emit a new `write_diagram` for these paths — they already exist; just add the markdown reference.\n\n",
+            orphans.len()
+        ));
+        for fname in &orphans {
+            out.push_str(&format!("  - diagrams/{fname}\n"));
+        }
+        out.push('\n');
+    }
+
     // v3: list existing wiki pages so the agent chooses `append_wiki_page`
     // when a relevant page already exists rather than creating a
     // near-duplicate. Only shows page slugs + the frontmatter kind —
@@ -608,6 +638,50 @@ fn unresolved_diagram_refs(slug: &str) -> Vec<(String, String)> {
     crate::commands::coverage::diagram_refs_with_alt(&md)
         .into_iter()
         .filter(|(path, _alt)| !crate::commands::coverage::diagram_path_resolved(slug, path))
+        .collect()
+}
+
+/// Counterpart to `unresolved_diagram_refs`: SVG files that exist in
+/// `<session>/diagrams/` but are never referenced from session.md OR
+/// any wiki page body. Used by the user prompt to nag the agent to
+/// add a `![](...)` reference (placed in a relevant section) instead
+/// of leaving the SVG stranded as an "orphan" in the renderer's
+/// fallback block. Synthesize still renders orphans as a safety net,
+/// but the goal is that this list stays empty in normal operation.
+fn orphan_diagram_files(slug: &str) -> Vec<String> {
+    let diagrams_dir = layout::session_dir(slug).join("diagrams");
+    let Ok(entries) = std::fs::read_dir(&diagrams_dir) else {
+        return Vec::new();
+    };
+    let mut on_disk: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("svg"))
+        .filter_map(|e| {
+            e.path()
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+        })
+        .collect();
+    on_disk.sort();
+    if on_disk.is_empty() {
+        return Vec::new();
+    }
+    let mut corpus = std::fs::read_to_string(layout::session_md(slug)).unwrap_or_default();
+    let wiki_dir = layout::session_dir(slug).join("wiki");
+    if let Ok(entries) = std::fs::read_dir(&wiki_dir) {
+        for e in entries.flatten() {
+            if e.path().extension().and_then(|s| s.to_str()) == Some("md") {
+                if let Ok(body) = std::fs::read_to_string(e.path()) {
+                    corpus.push('\n');
+                    corpus.push_str(&body);
+                }
+            }
+        }
+    }
+    on_disk
+        .into_iter()
+        .filter(|fname| !corpus.contains(&format!("diagrams/{fname}")))
         .collect()
 }
 

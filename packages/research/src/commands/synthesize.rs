@@ -370,8 +370,7 @@ fn render_orphan_diagrams(_slug: &str, session_dir: &std::path::Path, md: &str) 
     }
 
     let mut out = String::new();
-    out.push_str(r#"<section class="orphan-diagrams"><h2><span class="section-num">DIAGRAMS</span><span>Authored but unreferenced</span></h2>"#);
-    out.push_str("<p class=\"sub\">These diagrams were written via <code>write_diagram</code> but no prose or wiki page links to them. Rendered here so the work isn't lost.</p>");
+    out.push_str(r#"<section class="orphan-diagrams"><h2><span class="section-num">DIAGRAMS</span><span>Supplementary figures</span></h2>"#);
     for fname in &orphans {
         let path = diagrams_dir.join(fname);
         let svg = match fs::read_to_string(&path) {
