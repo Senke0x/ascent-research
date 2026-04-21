@@ -212,7 +212,18 @@ fn collect_wiki_stats(slug: &str) -> WikiStats {
             stats.pages_with_frontmatter += 1;
         }
         for url in &fm.sources {
-            if url.starts_with("http://") || url.starts_with("https://") {
+            // Accept any scheme the pipeline actually routes: http(s) for
+            // online fetches, file:// for add-local ingest. Without
+            // file://, `sources_unused` stays stuck at N even though
+            // every local file has a wiki page citing it — which
+            // manifested on tokio-v3 as `sources_unused = 41` after 12
+            // iters of digesting. Plain `wiki:<slug>` / `url:` prefixes
+            // are internal shorthand, not accepted-source URLs, so we
+            // deliberately don't match them here.
+            if url.starts_with("http://")
+                || url.starts_with("https://")
+                || url.starts_with("file://")
+            {
                 stats.source_urls.insert(url.clone());
             }
         }
@@ -392,5 +403,23 @@ mod tests {
         for input in ["[[Scheduler]]", "[[with.dot]]", "[[has space]]"] {
             assert!(re.captures(input).is_none(), "{input}");
         }
+    }
+
+    #[test]
+    fn frontmatter_scheme_whitelist_covers_http_https_file() {
+        // Regression guard (scheme-only unit — avoids env mutation
+        // that Rust 2024 made `unsafe`): the whitelist used in the
+        // `for url in &fm.sources` loop must accept file:// alongside
+        // http(s). Without file://, local-ingest sessions saw
+        // `sources_unused = N` forever even after every file got a
+        // wiki page citing it — observed on tokio-v3 live smoke.
+        let ok = |u: &str| {
+            u.starts_with("http://") || u.starts_with("https://") || u.starts_with("file://")
+        };
+        assert!(ok("http://ex.com/x"));
+        assert!(ok("https://ex.com/x"));
+        assert!(ok("file:///tmp/x.rs"));
+        assert!(!ok("wiki:scheduler"));
+        assert!(!ok("ftp://ex.com/x"));
     }
 }
