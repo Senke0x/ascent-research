@@ -21,6 +21,17 @@
 //!   is ~10× cheaper than one call per paragraph and tolerates modest
 //!   drift in paragraph count (falls back to monolingual on mismatch).
 
+// Helpers below are wired up only when `provider-claude` is compiled
+// in — that's when `inject_zh_translations` actually dispatches through
+// them. On default (and even `cargo test` without the feature) several
+// items are genuinely unreachable: `html_escape_text` / `system_prompt`
+// / `user_prompt` / the `outer_end` field live inside the feature-gated
+// block, and the unit tests only exercise the parsing helpers.
+//
+// Rather than chase each item with a per-item cfg, silence dead_code
+// for the whole module whenever `provider-claude` is absent.
+#![cfg_attr(not(feature = "provider-claude"), allow(dead_code))]
+
 use regex::Regex;
 use std::sync::OnceLock;
 

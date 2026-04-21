@@ -317,10 +317,58 @@ fn dispatch(cmd: Commands) -> Envelope {
             iterations,
             max_actions,
             dry_run,
-            fake_responses
-                .as_deref()
-                .map(|s| s.split('\u{1e}').map(str::to_string).collect()),
+            fake_responses.as_deref().map(split_fake_responses),
         ),
         Commands::Help => unreachable!("Help handled in run()"),
+    }
+}
+
+/// Split `--fake-responses` into individual JSON turns.
+///
+/// Accepts BOTH separators:
+/// - ASCII Record Separator (`\u{1e}`) — original wire format, used by
+///   integration tests that pipe multiple JSON payloads where `;` or
+///   commas inside the JSON would be ambiguous.
+/// - Semicolon (`;`) — what the `--help` text advertises; also the
+///   ergonomic choice for a developer typing a quick debug replay.
+///
+/// Semicolon takes precedence: if the string contains a literal `;` we
+/// split on it, otherwise we fall back to the record separator. This
+/// keeps the test wire format working and lets CLI users follow the
+/// documented syntax.
+#[cfg(any(feature = "autoresearch", test))]
+fn split_fake_responses(raw: &str) -> Vec<String> {
+    let delim: char = if raw.contains(';') { ';' } else { '\u{1e}' };
+    raw.split(delim).map(str::to_string).collect()
+}
+
+#[cfg(test)]
+mod split_fake_tests {
+    use super::split_fake_responses;
+
+    #[test]
+    fn splits_on_semicolon_when_present() {
+        let v = split_fake_responses("resp1;resp2;resp3");
+        assert_eq!(v, vec!["resp1", "resp2", "resp3"]);
+    }
+
+    #[test]
+    fn falls_back_to_record_separator() {
+        let v = split_fake_responses("a\u{1e}b\u{1e}c");
+        assert_eq!(v, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn single_payload_yields_one_element() {
+        let v = split_fake_responses("just-one");
+        assert_eq!(v, vec!["just-one"]);
+    }
+
+    #[test]
+    fn semicolon_wins_over_record_separator_if_both_present() {
+        // Record separator is vanishingly unlikely inside a JSON payload,
+        // but verify the precedence documented in the helper's docstring.
+        let v = split_fake_responses("a;b\u{1e}c");
+        assert_eq!(v, vec!["a", "b\u{1e}c"]);
     }
 }
