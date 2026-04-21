@@ -1,7 +1,7 @@
 ---
 name: research-local-wiki
-description: Research a Rust library, a local codebase, or a technical topic by building a persistent wiki + narrative report. Uses `research` CLI v3 — local file ingest, per-session SCHEMA.md for user guidance, karpathy-style wiki pages as the primary knowledge store, and figure-rich numbered sections as the narrative index. Use when the user asks to "研读 / 调研 / 深入 / 对比 / 画架构 / 梳理源码 / 建立知识库" on a specific library / codebase / topic they can point you at.
-triggers: research, 调研, 研读, 深入, deep dive, 梳理源码, 建立知识库, 对比框架, actionbook research, research loop, tokio 研究, rust 库调研
+description: Research a Rust library, a local codebase, or a technical topic by building a persistent wiki + narrative report. Uses `research` CLI v3 — local file ingest, per-session SCHEMA.md for user guidance, karpathy-style wiki pages as the primary knowledge store, and figure-rich numbered sections as the narrative index. Use when the user asks to deep-dive, investigate, review source code, or build a knowledge base on a specific library, codebase, or topic.
+triggers: research, deep dive, deep-dive, investigate, review source, source tree, build knowledge base, library analysis, codebase analysis, compare frameworks, actionbook research, research loop
 force_tool_turns: 15
 ---
 
@@ -106,7 +106,7 @@ $RBIN synthesize tokio-v3 --open
 ### Output
 | Command | Purpose |
 |---|---|
-| `synthesize [slug] [--bilingual] [--open]` | render report.html (inline SVG, wiki TOC, bilingual EN/中文 via Claude) |
+| `synthesize [slug] [--bilingual] [--open]` | render report.html (inline SVG, wiki TOC, bilingual EN/ZH via Claude) |
 | `report [slug] --format {rich-html\|brief-md}` | single-format output |
 | `coverage [slug]` | `report_ready` blockers + metric breakdown |
 | `diff [slug]` | unused / hallucinated source lists |
@@ -214,7 +214,7 @@ When running under `loop`, the agent operates under these infra-enforced rules:
   └── <sources>: every accepted source as a link list
 ```
 
-Bilingual mode (`--bilingual`) adds `<p class="tr-zh">` siblings under each English paragraph; EN/中文 toggle in the top-right floats.
+Bilingual mode (`--bilingual`) adds `<p class="tr-zh">` siblings under each English paragraph; an EN/ZH toggle floats in the top-right corner.
 
 ## Error Triage
 

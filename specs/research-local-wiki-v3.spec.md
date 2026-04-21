@@ -356,3 +356,90 @@ research synthesize tokio-v3 --bilingual
 - 图视图 UI(Obsidian / 第三方)
 - Auto-tagging / NER
 - Wiki → report 的 `--format wiki-export` 打包
+
+---
+
+## Reconciliation — implementation notes (post-live-smoke)
+
+Written after the tokio-v3 live smoke. All 11 steps shipped, plus 7
+corrective commits that address bugs the spec did not anticipate.
+This section is the authoritative map of *what actually ships*.
+
+### Step-by-step completion
+
+| Step | Spec deliverable | Commit |
+|------|------------------|--------|
+| 1 | `file://` + absolute-path classification in route layer | `a42e57a` |
+| 2 | `research add-local` with walkdir + globset + size caps | `431a601` |
+| 3 | `session::wiki` data layer (slug, CRUD, frontmatter) | `0f20fb4` |
+| 4 | `WriteWikiPage` / `AppendWikiPage` actions + dispatch | `e7613ed` |
+| 5 | `research wiki {list,show,rm}` | `3871165` |
+| 6 | Coverage picks up wiki pages + broken-link count | `ffda16d` |
+| 7 | Report renders wiki pages as HTML sections + `[[slug]]` | `90cc8d5` |
+| 8 | System/user prompts reframed wiki-first | `f0d8f11` |
+| 9 | SCHEMA.md + `research schema {show,edit}` + loop inject | `79b2391` |
+| 10 | `research wiki query` + `WikiQuery` event + `--save-as` | `c597c99` |
+| 11 | `research wiki lint` + `WikiLintRan` event | `7756e3c` |
+
+### Post-spec corrective commits (driven by tokio-v3 smoke)
+
+The spec's divergence detector and coverage merge had latent bugs
+that only surfaced with real LLM behavior on real source. Fixes:
+
+| Commit | Problem | Fix |
+|--------|---------|-----|
+| `e51f34c` | Loop #1 false-positive diverged at iter 3: `wiki_pages` missing from `coverage_signature` → writing wiki pages didn't register as progress | Added `wiki_pages` + `wiki_pages_with_frontmatter` to the signature |
+| `a9439c9` | Loop #5 false-positive diverged at iter 4: append-only turns produced identical signatures (page count flat, bytes growing) | Added `wiki_total_bytes` to coverage and the signature |
+| `c120386` | `sources_unused = 41` despite 7 files cited in wiki frontmatter: `collect_wiki_stats` only merged `http(s)://` URLs, not `file://` | Accept `file://` alongside http(s) in the frontmatter whitelist |
+| `5ab055e` | Agent wrote `![](diagrams/x.svg)` references but never emitted `write_diagram` → broken-image placeholder in HTML | System prompt gained a FIGURE-RICH CONTRACT + user prompt nags the agent about unresolved references until `write_diagram` lands |
+| `7bc86bf` | Reverse problem: SVG written but never referenced → invisible in report | Synthesize auto-mounts orphan SVGs in a safety-net "Supplementary figures" block at render time |
+| `62bedb0` | Orphan SVGs still occurred because overwriting a section silently dropped existing `![](…)` references | User prompt surfaces orphan files as a second nag block; system prompt adds a "never drop a reference when overwriting" rule |
+| `8ae7350` | Prompt-level rules insufficient — infra fix needed | `write_section` runs the new body through `preserve_diagram_refs`; missing references from the old body are re-appended automatically |
+
+### Report UX fixes
+
+| Commit | Problem | Fix |
+|--------|---------|-----|
+| `08e5cab` | 6 wiki pages rendered flat with no navigation | Added `.wiki-toc` pill grid above wiki pages; each page heading carries an `↑ index` back-link |
+| `a2f50cc` | Wiki page bodies rendered empty: `render_body` dropped everything before `## Overview`, which wiki pages don't have | New `render_wiki_page` variant skips `strip_scaffolding` |
+
+### Bundled SKILL
+
+`dfa491d` ships `skills/research-local-wiki/SKILL.md` inside the
+repo so Claude Code / Codex users have a single discovery surface
+for the v3 workflow. Previous research skills in the global
+`~/.claude/skills/` namespace target the pre-v3 browser-driven
+flow and don't know about `schema`, `wiki query`, `wiki lint`, or
+`add-local`.
+
+### Code surface vs spec
+
+The spec called out 11 steps. The code now implements 11 steps + 9
+corrective commits. Command surface as of this reconciliation:
+
+**New in v3**
+- `research add-local <path> --glob '...' --max-file-bytes ... --max-total-bytes ...`
+- `research schema {show,edit}`
+- `research wiki {list,show,rm,query,lint}`
+
+**Unchanged from v1/v2 but now wiki-aware**
+- `research synthesize` — renders wiki TOC + inline SVGs + orphan-diagram safety net
+- `research coverage` — tracks `wiki_pages`, `wiki_pages_with_frontmatter`, `wiki_total_bytes`, `broken_wiki_links`, `diagrams_resolved`
+- `research new` — seeds `SCHEMA.md` with a starter template
+
+**Internal invariants the code now holds that the spec didn't specify**
+1. `write_section` never silently drops a `![](diagrams/x.svg)` reference.
+2. Orphan SVGs are always visible in the report (via the safety-net block).
+3. Divergence detection counts both page count and total wiki bytes as progress.
+4. The autoresearch loop re-reads `SCHEMA.md` every iteration; the user can edit it mid-session via `research schema edit` and the change takes effect on the next turn.
+5. `file://` URLs participate in `sources_unused` accounting the same way `https://` URLs do.
+
+### Not shipped in this slice
+
+Per the "Out of scope" list above, and confirmed post-smoke:
+
+- No cross-session wiki (each session's `wiki/` is still local).
+- No Obsidian-style graph view in the HTML report — the wiki TOC grid is as close as this slice gets.
+- No proper-noun heuristic in `wiki lint`'s `suggested_new_pages` — the field is emitted as an empty list with a note.
+
+These are tracked for v4 or later.
