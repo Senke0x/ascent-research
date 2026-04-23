@@ -1,5 +1,7 @@
 # ascent-research — hermes-agent plugin
 
+> **For a cold-start orientation** (new Claude Code session / new reader), read [`USAGE.md`](./USAGE.md) first — it covers architecture, the 16 tools, prompt templates, and troubleshooting in one file. This README focuses on install/config mechanics.
+
 Integrates the [`ascent-research`](../..) CLI into
 [hermes-agent](https://hermes-agent.nousresearch.com/) as **16 tools**.
 All web fetches go through [actionbook](https://github.com/ZhangHanDong/actionbook)
