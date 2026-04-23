@@ -23,12 +23,18 @@ PRESET_NAME = "actionbook-only"
 PRESET_DST = Path.home() / ".actionbook" / "research" / "presets" / f"{PRESET_NAME}.toml"
 
 DEFAULT_TIMEOUT_SEC = 60
+# These are the Python-subprocess wall-clock ceilings. They MUST be larger
+# than whatever ACTIONBOOK_RESEARCH_ADD_TIMEOUT_MS the Rust binary is using
+# internally (currently 120000ms in ~/.hermes/.env) — otherwise Python will
+# kill the subprocess before Rust has a chance to finish or report.
 LONG_TIMEOUT_SEC = {
-    "ascent_synthesize": 300,
-    "ascent_loop_step": 240,
-    "ascent_wiki_query": 180,
-    "ascent_batch": 180,
-    "ascent_add_local": 120,
+    "ascent_synthesize": 600,           # render pass + bilingual translate
+    "ascent_illustrate_hero": 420,       # 4-click + 180s image wait + download
+    "ascent_loop_step": 300,             # single iteration can fetch more sources
+    "ascent_wiki_query": 240,            # LLM prose generation
+    "ascent_add": 150,                   # one URL, 120s Rust budget + 30s buffer
+    "ascent_batch": 360,                 # 4 concurrency × 120s worst case + buffer
+    "ascent_add_local": 180,             # filesystem walk + smell tests
 }
 
 

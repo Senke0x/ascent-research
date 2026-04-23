@@ -11,6 +11,29 @@ Scope: how to turn a one-line user request like *"research X"* or
 *"use ascent-research to investigate Y"* into the full 6-step chain
 automatically, without forcing the user to name each tool by hand.
 
+## Hard rules (READ THIS FIRST — violating these breaks reproducibility)
+
+1. **NEVER use the `terminal` tool for HTTP** — no `curl`, no
+   `wget`, no `python3 -c "import requests; ..."`, no `python3 -c
+   "import urllib; ..."`. Web content acquisition is ONLY via
+   `ascent_add` / `ascent_batch` / `ascent_add_local`.
+2. **NEVER fall back to raw HTTP when an ascent tool times out or
+   errors**. If `ascent_add` returns `ok: false`, report the error
+   (`fetch_failed`, `wrong_url`, `empty_content`, etc.) and either
+   (a) retry that single URL with `ascent_add {url, timeout_sec: 180}`
+   or (b) move on to the next URL. DO NOT shell out to curl/requests
+   to "get the content anyway" — that defeats the entire purpose of
+   this skill and breaks the durable session's provenance chain.
+3. **NEVER call `browser_*` or `web_*`** even if they're listed — they
+   belong to a different toolset that this skill supersedes.
+4. **NEVER scout via search engines** (Google/Bing/DuckDuckGo). Go
+   directly to known primary URLs or to stable search endpoints
+   (HN Algolia, specific subreddit top pages, author blogs).
+
+If you need to "debug why fetch failed", use `ascent_diff`,
+`ascent_coverage`, or just describe the failure to the user — do not
+use terminal to inspect the URL directly.
+
 ## Mental model
 
 The user has 17 `ascent_*` tools installed as a hermes plugin (toolset
@@ -18,9 +41,6 @@ The user has 17 `ascent_*` tools installed as a hermes plugin (toolset
 `web_*` tools for any durable research work. The plugin shells out to
 the Rust `ascent-research` binary and stores sessions under
 `~/.actionbook/ascent-research/<slug>/`.
-
-Do NOT call `browser_*` or `web_*` when this skill is active. Do NOT
-scout via search engines first unless the user explicitly asked.
 
 ## Auth (no API keys)
 
