@@ -172,12 +172,75 @@ tail -5 ~/.actionbook/ascent-research/<slug>/session.jsonl | python3 -m json.too
 Synthesize this session into a report.
 ```
 
-**Expect**: `ascent_synthesize {slug}` produces `report.json` + `report.html`.
+**Expect**: `ascent_synthesize {slug}` produces `report.json` + `report-brief.md` (featured) + `report.html` (byproduct).
+Envelope's `data.report_md` points to the markdown path.
 
 **Verify**:
 ```bash
-ls -la ~/.actionbook/ascent-research/<slug>/report.*
-open ~/.actionbook/ascent-research/<slug>/report.html  # macOS
+ls -la ~/.actionbook/ascent-research/<slug>/report*
+cat ~/.actionbook/ascent-research/<slug>/report-brief.md | head -30
+```
+
+---
+
+## 7a. Hero illustrate — dry-run (free, ~30s)
+
+Use dry_run to validate the prompt-drafting path before spending ChatGPT
+budget. Requires session already synthesized (step 7).
+
+**Prompt**:
+```
+For session <slug>, dry-run ascent_illustrate_hero — just show me the
+prompt that would be sent to ChatGPT.
+```
+
+**Expect**: `ascent_illustrate_hero {slug, dry_run: true}` returns
+`{ok: true, data: {topic, chatgpt_prompt_preview, dry_run: true}}`.
+The preview string should contain Apple-style suffix terms like
+"muted", "16:9", "no text".
+
+If `PROMPT_DRAFT_FAILED`: Claude Code session may be stale — run
+`claude` interactively once and retry. If empty prompt: check the
+envelope's `envelope_data_keys` hint.
+
+---
+
+## 7b. Hero illustrate — real run (paid, 1-3 min)
+
+**Prerequisite**: chatgpt.com must be logged in in the Chrome profile
+actionbook uses (same one you log into manually).
+
+**Prompt**:
+```
+Generate a hero cover image for session <slug>.
+```
+
+**Expect**:
+- `ascent_illustrate_hero {slug}` runs
+- Actionbook opens a new ChatGPT tab, types the prompt, waits
+- Image generates in 30-90s
+- `~/.actionbook/ascent-research/<slug>/images/hero.png` written
+- `report-brief.md` gets `![hero](images/hero.png)` prepended
+- Envelope `data.via: "chatgpt"` and `data.source_url: "..."`
+
+**Verify**:
+```bash
+ls ~/.actionbook/ascent-research/<slug>/images/
+open ~/.actionbook/ascent-research/<slug>/images/hero.png
+head -3 ~/.actionbook/ascent-research/<slug>/report-brief.md
+cat ~/.actionbook/ascent-research/<slug>/images/hero.meta.json
+```
+
+**Common failures & recovery** (all fail loud per design):
+- `NOT_LOGGED_IN` — open chatgpt.com in Chrome, log in, retry
+- `RATE_LIMITED` — ChatGPT Plus daily cap; wait, or add `use_flux_fallback: true` to prompt
+- `CONTENT_POLICY` — prompt rejected; pass `prompt_override: "<your prompt>"` to bypass Claude drafting
+- `IMAGE_NOT_PRODUCED` (180s) — inspect `images/hero-debug.html` + `hero-debug.png`; DOM may have changed
+- Re-running is **always safe** — MD is not mutated until image succeeds
+
+**Advanced**: force FLUX fallback (useful if ChatGPT DOM breaks):
+```
+Generate a hero for <slug> with use_flux_fallback true.
 ```
 
 ---
@@ -263,6 +326,8 @@ This should trigger, in order: `ascent_new` → `ascent_batch` → `ascent_wiki_
 - [ ] Step 1: all 16 tools visible in `/tools list`
 - [ ] Step 3: `actionbook browser list-sessions` shows `research-<slug>`
 - [ ] Step 5: `wiki/runtime-comparison.md` exists and has `kind: analysis`
-- [ ] Step 7: `report.html` renders in browser
+- [ ] Step 7: `report-brief.md` exists and has content
+- [ ] Step 7a: dry-run returns a sensible prompt preview
+- [ ] Step 7b: `hero.png` exists, MD has `![hero]` at top
 - [ ] Step 8: LLM declines or redirects the raw `browser` request
 - [ ] Step 9: `confirm=true` guard triggers on first `ascent_close`

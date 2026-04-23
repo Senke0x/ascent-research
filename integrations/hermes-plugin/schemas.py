@@ -86,17 +86,48 @@ ADD_LOCAL = {
 SYNTHESIZE = {
     "name": "ascent_synthesize",
     "description": (
-        "Render the session into report.json + report.html (editorial "
-        "deep-research report with citations). Long-running; costs LLM "
-        "tokens if 'bilingual' is true."
+        "Synthesize the session into a markdown report. Chains: Rust "
+        "`synthesize` → `report --format brief-md`. Produces "
+        "report.json (canonical data), report-brief.md (FEATURED "
+        "output — pass this path to the user / to ascent_illustrate_hero), "
+        "and report.html (byproduct, not featured). Long-running; costs "
+        "LLM tokens only if 'bilingual' is true."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "slug": {"type": "string", "description": "Session slug. Defaults to active."},
             "bilingual": {"type": "boolean", "description": "Render Chinese translations alongside English. Requires a working Claude provider (via logged-in `claude` CLI)."},
-            "no_render": {"type": "boolean", "description": "Skip HTML rendering; produce report.json only."},
+            "no_render": {"type": "boolean", "description": "Skip HTML rendering; produce report.json only. Markdown render still runs."},
         },
+    },
+}
+
+ILLUSTRATE_HERO = {
+    "name": "ascent_illustrate_hero",
+    "description": (
+        "Generate a single Apple-style hero cover image for a synthesized "
+        "session by driving the user's ChatGPT session via actionbook "
+        "(real GPT-Image-2, no API key — uses the user's logged-in "
+        "browser profile). Prepends `![hero](images/hero.png)` to "
+        "report-brief.md on success. "
+        "PREREQUISITE: ascent_synthesize has already run for this slug. "
+        "PREREQUISITE: user is logged into chatgpt.com in the Chrome "
+        "profile actionbook drives. "
+        "POLICY: always overwrites any existing hero. Fails LOUDLY with "
+        "typed error codes — the markdown is never mutated until a valid "
+        "image is on disk, so it is safe to retry by simply calling this "
+        "tool again."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string", "description": "Session slug. Must already be synthesized."},
+            "prompt_override": {"type": "string", "description": "Skip Claude drafting and use this prompt verbatim (Apple style suffix still auto-appended)."},
+            "use_flux_fallback": {"type": "boolean", "description": "On ChatGPT-path failure, retry via hermes FLUX 2 Pro (requires running inside a hermes process). Default false — prefer fail-loud."},
+            "dry_run": {"type": "boolean", "description": "Draft the prompt (via Claude if no override) and return a preview; do NOT drive the browser."},
+        },
+        "required": ["slug"],
     },
 }
 
@@ -256,6 +287,7 @@ ALL_SCHEMAS = [
     BATCH,
     ADD_LOCAL,
     SYNTHESIZE,
+    ILLUSTRATE_HERO,
     WIKI_QUERY,
     STATUS,
     LIST,
