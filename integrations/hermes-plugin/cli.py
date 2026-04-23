@@ -75,7 +75,13 @@ def _run(argv: list[str], timeout: int) -> str:
 
     stdout = (out.stdout or "").strip()
     if out.returncode == 0:
-        return stdout or json.dumps({"ok": True})
+        if not stdout:
+            return json.dumps({"ok": True})
+        if stdout.startswith(("{", "[")):
+            return stdout
+        # Some subcommands (e.g. `show`) print raw markdown even with --json —
+        # wrap so the handler contract (JSON string) holds.
+        return json.dumps({"ok": True, "data": {"stdout": stdout}})
     # Non-zero: the binary still prints a JSON envelope on stdout for failures.
     if stdout.startswith("{"):
         return stdout
