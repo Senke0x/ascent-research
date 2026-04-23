@@ -315,7 +315,34 @@ platform_toolsets:
 
 ---
 
-## 8. 常用 prompt 模板
+## 8. 一键 prompt —— skill 激活后（推荐用法）
+
+安装脚本会把 `skill/SKILL.md` 装到 `~/.hermes/skills/ascent-research/SKILL.md`。Hermes 启动时把它注入系统 prompt——你用 trigger 词（"research" / "investigate" / "deep dive" / "ascent-research" 等）开口时，LLM 自动知道完整的 6 步链。
+
+**一行示例**（不需要再写长 prompt）：
+
+```
+Use ascent-research to research <topic> and generate a hero image.
+```
+
+LLM 自动串：
+```
+ascent_new → ascent_batch (5-10 stable URLs)
+          → ascent_wiki_query (save_as overview)
+          → ascent_loop_step (max_actions=3)
+          → ascent_synthesize
+          → ascent_illustrate_hero
+          → 汇报 slug / MD 路径 / hero.png 路径
+```
+
+**想跳某步**：
+- "quick research on X"（省 loop_step）
+- "research X but skip the image"（省 illustrate_hero）
+- "rebuild research on X"（先 `rm -rf ~/.actionbook/ascent-research/*` 再起）
+
+**手动每步**：skill 不是强制。你还是可以精准地说 `ascent_add <url> to session <slug>` 做单步操作，LLM 不会多嘴。
+
+## 8b. 手写 prompt 模板（不依赖 skill）
 
 ### 8.1 新课题开研
 

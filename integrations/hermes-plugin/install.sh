@@ -29,7 +29,7 @@ log() { printf '[%s] %s\n' "ascent-research" "$*"; }
 die() { printf '[%s] ERROR: %s\n' "ascent-research" "$*" >&2; exit 1; }
 
 # ─── 1. Pre-flight ────────────────────────────────────────────────
-log "1/6 preflight checks"
+log "1/7 preflight checks"
 command -v cargo >/dev/null   || die "cargo not found. Install Rust from https://rustup.rs"
 command -v python3 >/dev/null || die "python3 not found."
 command -v actionbook >/dev/null || log "  WARN: actionbook not on PATH — tools requiring fetch will fail until installed"
@@ -43,17 +43,17 @@ esac
 
 # ─── 2. Build + install binary ────────────────────────────────────
 if [ "$SKIP_BUILD" -eq 1 ]; then
-    log "2/6 skipping cargo install (--skip-build)"
+    log "2/7 skipping cargo install (--skip-build)"
     command -v ascent-research >/dev/null \
         || die "ascent-research binary not found; re-run without --skip-build"
 else
-    log "2/6 cargo install ascent-research (this takes 1-3 min, cold cache)"
+    log "2/7 cargo install ascent-research (this takes 1-3 min, cold cache)"
     ( cd "$REPO_ROOT" && cargo install --path packages/research \
         --features provider-claude --locked --quiet )
 fi
 
 # ─── 3. Symlink plugin into ~/.hermes/plugins/ ────────────────────
-log "3/6 symlinking plugin into ~/.hermes/plugins/ascent-research"
+log "3/7 symlinking plugin into ~/.hermes/plugins/ascent-research"
 mkdir -p "$HOME/.hermes/plugins"
 TARGET="$HOME/.hermes/plugins/ascent-research"
 if [ -L "$TARGET" ] || [ -e "$TARGET" ]; then
@@ -62,13 +62,25 @@ fi
 ln -s "$SCRIPT_DIR" "$TARGET"
 
 # ─── 4. Install actionbook-only preset ────────────────────────────
-log "4/6 installing actionbook-only preset"
+log "4/7 installing actionbook-only preset"
 PRESET_DST="$HOME/.actionbook/research/presets/actionbook-only.toml"
 mkdir -p "$(dirname "$PRESET_DST")"
 cp "$SCRIPT_DIR/presets/actionbook-only.toml" "$PRESET_DST"
 
-# ─── 5. Smoke ──────────────────────────────────────────────────────
-log "5/6 smoke test: ascent-research --json list"
+# ─── 5. Install hermes skill (so "research X" auto-triggers chain) ─
+log "5/7 installing hermes skill (~/.hermes/skills/ascent-research/SKILL.md)"
+SKILL_DST_DIR="$HOME/.hermes/skills/ascent-research"
+SKILL_DST="$SKILL_DST_DIR/SKILL.md"
+mkdir -p "$SKILL_DST_DIR"
+if [ -f "$SKILL_DST" ]; then
+    BACKUP="$SKILL_DST.bak.$(date +%Y%m%d-%H%M%S)"
+    cp "$SKILL_DST" "$BACKUP"
+    log "  backed up existing SKILL.md → $BACKUP"
+fi
+cp "$SCRIPT_DIR/skill/SKILL.md" "$SKILL_DST"
+
+# ─── 6. Smoke ──────────────────────────────────────────────────────
+log "6/7 smoke test: ascent-research --json list"
 if ! ascent-research --json list > /tmp/ar-smoke.json 2>&1; then
     echo "--- smoke output ---" >&2
     cat /tmp/ar-smoke.json >&2
@@ -81,23 +93,29 @@ assert d.get('ok') is True, d
 print('  ok, envelope parsed, sessions:', len(d.get('data', {}).get('sessions', [])))
 "
 
-# ─── 6. Next-step banner ──────────────────────────────────────────
-log "6/6 done"
+# ─── 7. Next-step banner ──────────────────────────────────────────
+log "7/7 done"
 cat <<EOF
 
 Install complete.
 
-Next: edit ~/.hermes/config.yaml and add 'ascent-research' to
-platform_toolsets (and remove 'browser' + 'web' for consistent
-routing through actionbook):
+If this is your first install, edit ~/.hermes/config.yaml and add
+'ascent-research' to platform_toolsets (remove 'browser' + 'web' for
+consistent routing through actionbook):
 
   platform_toolsets:
     cli:      [terminal, file, skills, todo, ascent-research]
     telegram: [terminal, file, ascent-research]
 
-Then start hermes and run a smoke prompt:
+Then restart hermes. With the skill installed, you can now trigger
+the full research chain with a one-liner:
 
-  "List all my ascent-research sessions."
+  "Use ascent-research to research <topic> and generate a hero image."
+
+The skill (~/.hermes/skills/ascent-research/SKILL.md) teaches hermes
+the 6-step chain — new → batch → wiki_query → loop_step → synthesize
+→ illustrate_hero — so you don't have to spell it out.
 
 Full test ladder: integrations/hermes-plugin/TESTING.md
+Cold-start doc:   integrations/hermes-plugin/USAGE.md
 EOF
