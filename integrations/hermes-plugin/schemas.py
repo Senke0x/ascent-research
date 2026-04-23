@@ -123,6 +123,11 @@ ILLUSTRATE_HERO = {
         "type": "object",
         "properties": {
             "slug": {"type": "string", "description": "Session slug. Must already be synthesized."},
+            "aspect_ratio": {
+                "type": "string",
+                "enum": ["story", "portrait", "landscape", "widescreen", "square", "auto"],
+                "description": "Image aspect ratio picked via ChatGPT's ratio menu. story=9:16 (vertical cover, default), portrait=3:4, landscape=4:3, widescreen=16:9, square=1:1, auto=model picks.",
+            },
             "prompt_override": {"type": "string", "description": "Skip Claude drafting and use this prompt verbatim (Apple style suffix still auto-appended)."},
             "use_flux_fallback": {"type": "boolean", "description": "On ChatGPT-path failure, retry via hermes FLUX 2 Pro (requires running inside a hermes process). Default false — prefer fail-loud."},
             "dry_run": {"type": "boolean", "description": "Draft the prompt (via Claude if no override) and return a preview; do NOT drive the browser."},
