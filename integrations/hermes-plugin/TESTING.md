@@ -4,9 +4,14 @@ A 10-step ladder from shell smoke to full E2E. Each step is independent —
 if an earlier step fails, the later ones won't pass. Run in order the
 first time, then cherry-pick for regression.
 
-Estimated total cost if you run 1-10 end-to-end with default (claude)
-provider: **~1.5 USD** of Anthropic API tokens (dominated by steps 5, 6, 7).
-Steps 0-4 and 8-10 are free.
+Steps 5, 6, 7 hit an LLM provider — by default `provider=claude`, which
+runs through the `claude` Claude Code CLI's existing session (no API key
+consumed; the cost is whatever that subscription / Keychain session is
+already paying for). Steps 0-4 and 8-10 touch no LLM.
+
+If `claude` is not logged in, set `provider: "fake"` in the tool args to
+walk the plumbing with canned responses, or `provider: "codex"` to route
+through the `codex` CLI's ChatGPT session instead.
 
 ---
 
