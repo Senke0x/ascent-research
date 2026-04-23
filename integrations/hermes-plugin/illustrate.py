@@ -42,6 +42,16 @@ APPLE_STYLE_SUFFIX = (
 
 SELECTORS = {
     "prompt_textarea": "#prompt-textarea",
+    # The "+" attach/tools button next to the composer. Verified 2026-04-23.
+    "composer_plus_btn": '[data-testid="composer-plus-btn"]',
+    # XPath for the "Create image" menu item (role="menuitemradio"). Only
+    # appears while the plus menu is open — clicked in the same actionbook
+    # subprocess call as composer_plus_btn via multi-selector syntax, so the
+    # menu doesn't have a chance to close between clicks.
+    "menu_create_image": '//div[@role="menuitemradio" and descendant::div[text()="Create image"]]',
+    # Confirms we're in image-generation mode: composer placeholder flips to
+    # "Describe or edit an image" after Create image is clicked.
+    "prompt_textarea_image_mode": '#prompt-textarea[data-placeholder*="image" i], textarea[data-placeholder*="image" i], textarea[placeholder*="image" i]',
     "assistant_latest": "[data-message-author-role='assistant']:last-of-type",
     "assistant_latest_img": "[data-message-author-role='assistant']:last-of-type img",
 }
@@ -316,8 +326,9 @@ def generate_hero(args: dict) -> dict:
             "command": "ascent_illustrate_hero",
             "data": {
                 "topic": topic,
-                "chatgpt_prompt_preview": f"Generate an image. {full_prompt}",
+                "chatgpt_prompt_preview": full_prompt,
                 "dry_run": True,
+                "note": "Image mode will be entered via + → Create image menu click; prompt sent verbatim (no 'Generate an image.' preamble).",
             },
         }
 
@@ -399,10 +410,50 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
             {**debug, "underlying": e.details},
         )
 
-    # Type + send
-    full_input = f"Generate an image. {full_prompt}"
+    # Explicitly enter Image mode via the + menu.
+    #
+    # Multi-selector click: both clicks happen in the same actionbook
+    # subprocess so the menu can't close between them. Without this
+    # flow, we'd fall back to typing "Generate an image." as a regular
+    # message and hope ChatGPT routes to GPT-Image-2 — unreliable.
+    try:
+        _run_ab(
+            "browser", "click",
+            SELECTORS["composer_plus_btn"],
+            SELECTORS["menu_create_image"],
+            "--session", AB_SESSION,
+            timeout=15,
+        )
+    except HeroError as e:
+        debug = _dump_debug(slug)
+        raise HeroError(
+            "IMAGE_MODE_ENTRY_FAILED",
+            "Could not click + → Create image. The ChatGPT DOM may have "
+            "changed. Inspect debug HTML and update SELECTORS in "
+            f"illustrate.py. Debug: {debug['debug_html']}.",
+            {**debug, "underlying": e.details},
+        )
+
+    # Sanity check: composer placeholder should flip to "Describe or edit
+    # an image" once Create image is active. Soft-verify — if the selector
+    # doesn't match we still proceed (some ChatGPT variants may use a
+    # different placeholder).
+    try:
+        _run_ab(
+            "browser", "wait", "element",
+            SELECTORS["prompt_textarea_image_mode"],
+            "--session", AB_SESSION, "--timeout", "3000",
+            timeout=8,
+        )
+    except HeroError:
+        logger.warning(
+            "image-mode placeholder not detected; proceeding anyway"
+        )
+
+    # Type + send. Mode is now explicitly Image, so no "Generate an
+    # image." preamble needed — just the crafted prompt verbatim.
     _run_ab(
-        "browser", "type", SELECTORS["prompt_textarea"], full_input,
+        "browser", "type", SELECTORS["prompt_textarea"], full_prompt,
         "--session", AB_SESSION,
         timeout=30,
     )
@@ -521,7 +572,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
                 "via": "chatgpt",
                 "model": "gpt-image-2 (via chatgpt.com)",
                 "source_url": src_url,
-                "full_prompt": full_input,
+                "full_prompt": full_prompt,
             },
             indent=2,
         ),
