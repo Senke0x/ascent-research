@@ -14,8 +14,17 @@ browser — the plugin ships an `actionbook-only` preset that strips every
 | `actionbook` | See the actionbook project |
 | hermes-agent | `v0.10.0+` |
 
-Set `ANTHROPIC_API_KEY` if you plan to use `ascent_loop_step` or
-`ascent_wiki_query` with the default (claude) provider.
+LLM-backed tools (`ascent_loop_step`, `ascent_wiki_query`) reuse an
+existing subscription via subprocess, not an API key:
+
+- `provider=claude` (default) — needs `claude` (Claude Code CLI) logged
+  in; `cc-sdk` reads the session token directly.
+- `provider=codex` — needs `codex` CLI logged into a ChatGPT account;
+  spawns `codex app-server` per call.
+- `provider=fake` — no auth, returns canned responses (plumbing test only).
+
+No `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env var is consulted by
+ascent-research in any provider path.
 
 ## Install
 
@@ -103,7 +112,10 @@ active.
 - `ACTIONBOOK_BROWSER_SESSION` — pin actionbook session ID (otherwise
   auto-named `research-<slug>`)
 - `ACTIONBOOK_RESEARCH_ADD_TIMEOUT_MS` — default per-fetch timeout in ms
-- `ANTHROPIC_API_KEY` — required for `ascent_loop_step` / `ascent_wiki_query` with `provider=claude`
+- `CODEX_BIN` — override `codex` binary path (only consulted when `provider=codex`)
+
+LLM providers do **not** read API key env vars — they piggyback on
+`claude` or `codex` CLI sessions. See "Prerequisites" above.
 
 ## Behavior contract
 
@@ -121,7 +133,8 @@ active.
 |---|---|
 | `{"error": "binary 'ascent-research' not found on PATH"}` | Run `cargo install --path packages/research --features provider-claude` |
 | `{"error": "binary 'actionbook' not found on PATH"}` | Install actionbook |
-| `ascent_loop_step` → `PROVIDER_NOT_AVAILABLE` | Rebuild with `--features provider-claude` (or `provider-codex`) and set `ANTHROPIC_API_KEY` |
+| `ascent_loop_step` → `PROVIDER_NOT_AVAILABLE` | Rebuild with `--features provider-claude` or `provider-codex`; confirm the matching CLI (`claude` / `codex`) is logged in |
+| `ascent_loop_step` / `wiki_query` → `cc-sdk` auth error | Refresh the Claude Code session — open `claude` and send one message |
 | `browser profile already owned by session ...` | `export ACTIONBOOK_BROWSER_SESSION=<that-id>` or close the owning session |
 | Plugin doesn't appear in `/tools list` | Symlink missing / wrong name; check `~/.hermes/plugins/ascent-research/plugin.yaml` |
 

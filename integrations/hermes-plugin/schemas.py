@@ -94,7 +94,7 @@ SYNTHESIZE = {
         "type": "object",
         "properties": {
             "slug": {"type": "string", "description": "Session slug. Defaults to active."},
-            "bilingual": {"type": "boolean", "description": "Render Chinese translations alongside English. Requires Claude provider; costs tokens."},
+            "bilingual": {"type": "boolean", "description": "Render Chinese translations alongside English. Requires a working Claude provider (via logged-in `claude` CLI)."},
             "no_render": {"type": "boolean", "description": "Skip HTML rendering; produce report.json only."},
         },
     },
@@ -234,8 +234,9 @@ LOOP_STEP = {
     "description": (
         "Run ONE iteration of the autonomous research loop: read SCHEMA.md "
         "+ session state, pick next actions, execute them. Does NOT loop — "
-        "call again for the next step. Costs LLM tokens (provider default: "
-        "claude). Requires the binary built with --features provider-claude "
+        "call again for the next step. Uses the configured LLM provider "
+        "(default: claude, via the logged-in `claude` CLI — no API key "
+        "needed). Requires the binary built with --features provider-claude "
         "or --features provider-codex."
     ),
     "parameters": {
