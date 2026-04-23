@@ -218,9 +218,12 @@ Plugin handler (illustrate.py:generate_hero):
   5. actionbook browser wait network-idle (15s)
   6. actionbook browser wait element #prompt-textarea (20s)
      ↑ 这一步**失败 = NOT_LOGGED_IN**（登录态探测）
-  7. actionbook browser click  （多选择器一次点两下，middle-state 菜单不闭合）
-     1) [data-testid="composer-plus-btn"]           ← + 按钮
-     2) //div[@role="menuitemradio" ...Create image] ← "Create image" 菜单项
+  7. actionbook browser click  （多选择器一次点 4 下，所有 transient 菜单在同
+                                 一 subprocess 里完成，来不及闭合）
+     1) [data-testid="composer-plus-btn"]              ← + 按钮
+     2) //div[@role="menuitemradio" ...Create image]   ← "Create image"
+     3) [aria-label="Choose image aspect ratio"]       ← aspect 菜单打开
+     4) //div[@role="menuitemradio" ...<aspect>]       ← Story 9:16 / Portrait 3:4 / ...
      ↑ 失败 = IMAGE_MODE_ENTRY_FAILED（ChatGPT DOM 变了）
   7b. soft-verify: placeholder 变成 "Describe or edit an image"
   8. actionbook browser type #prompt-textarea "<prompt>"  ← 无 preamble，mode 已显式
@@ -229,11 +232,14 @@ Plugin handler (illustrate.py:generate_hero):
      [data-message-author-role='assistant']:last-of-type img (180s)
      ↑ 失败时读 assistant 文本，映射到 RATE_LIMITED / CONTENT_POLICY /
        IMAGE_NOT_PRODUCED
- 10. actionbook browser html <img> → 抽 src
- 11. urllib 下载 src → images/hero.png
-     失败时退路：actionbook browser screenshot --element <img>
+ 10. actionbook browser wait element 'img[alt^="Generated image"]' (180s)
+     ↑ ChatGPT image-mode 响应用 alt 开头 "Generated image:"，不是普通
+       [data-message-author-role='assistant'] 结构
+ 11. actionbook browser eval  → 在 tab 内跑 JS `fetch(src)` → base64
+     ↑ 复用 Chrome 登录 cookie，避免 urllib 直接 403；比 screenshot 纯净
+       （无 UI chrome），拿到 1054×1492 原图
  12. prepend ![hero](images/hero.png) 到 report-brief.md（幂等）
- 13. 写 images/hero.meta.json（prompt + src + model + timestamp）
+ 13. 写 images/hero.meta.json（prompt + src + model + timestamp + aspect_ratio + bytes）
   ↓
 Return {ok, data: {hero_image, source_url, md_path, meta, via: "chatgpt"}}
 ```

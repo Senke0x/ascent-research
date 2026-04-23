@@ -52,8 +52,23 @@ SELECTORS = {
     # Confirms we're in image-generation mode: composer placeholder flips to
     # "Describe or edit an image" after Create image is clicked.
     "prompt_textarea_image_mode": '#prompt-textarea[data-placeholder*="image" i], textarea[data-placeholder*="image" i], textarea[placeholder*="image" i]',
+    # Aspect-ratio chooser (only visible while Image mode is active).
+    "aspect_ratio_btn": '[aria-label="Choose image aspect ratio"]',
+    # Image response: ChatGPT wraps the generated image with alt starting
+    # with "Generated image:". Much more reliable than the assistant-role
+    # wrapper (which isn't used for image-mode responses).
     "assistant_latest": "[data-message-author-role='assistant']:last-of-type",
-    "assistant_latest_img": "[data-message-author-role='assistant']:last-of-type img",
+    "assistant_generated_img": 'img[alt^="Generated image"]',
+}
+
+# XPath per aspect-ratio label — keys match ILLUSTRATE_HERO.aspect_ratio enum.
+ASPECT_XPATH = {
+    "auto": '//div[@role="menuitemradio" and descendant::div[text()="Auto"]]',
+    "square": '//div[@role="menuitemradio" and descendant::div[text()="Square 1:1"]]',
+    "portrait": '//div[@role="menuitemradio" and descendant::div[text()="Portrait 3:4"]]',
+    "story": '//div[@role="menuitemradio" and descendant::div[text()="Story 9:16"]]',
+    "landscape": '//div[@role="menuitemradio" and descendant::div[text()="Landscape 4:3"]]',
+    "widescreen": '//div[@role="menuitemradio" and descendant::div[text()="Widescreen 16:9"]]',
 }
 
 PROMPT_DRAFT_TIMEOUT_SEC = 180
@@ -317,6 +332,14 @@ def generate_hero(args: dict) -> dict:
     report_json_path, md_path = _ensure_synthesized(slug)
     topic = _read_topic(report_json_path)
     prompt_override = args.get("prompt_override")
+    aspect_ratio = (args.get("aspect_ratio") or "story").lower()
+    if aspect_ratio not in ASPECT_XPATH:
+        raise HeroError(
+            "INVALID_ASPECT",
+            f"aspect_ratio '{aspect_ratio}' not recognized. "
+            f"Valid: {sorted(ASPECT_XPATH)}",
+            {},
+        )
 
     full_prompt = _craft_prompt(slug, topic, prompt_override)
 
@@ -327,13 +350,14 @@ def generate_hero(args: dict) -> dict:
             "data": {
                 "topic": topic,
                 "chatgpt_prompt_preview": full_prompt,
+                "aspect_ratio": aspect_ratio,
                 "dry_run": True,
-                "note": "Image mode will be entered via + → Create image menu click; prompt sent verbatim (no 'Generate an image.' preamble).",
+                "note": "Image mode + aspect ratio applied via single multi-selector actionbook click; prompt sent verbatim (no 'Generate an image.' preamble).",
             },
         }
 
     try:
-        return _generate_via_chatgpt(slug, full_prompt, md_path)
+        return _generate_via_chatgpt(slug, full_prompt, md_path, aspect_ratio)
     except HeroError as chatgpt_err:
         if not args.get("use_flux_fallback"):
             raise
@@ -365,7 +389,7 @@ def generate_hero(args: dict) -> dict:
 
 # ─────────────────────────── ChatGPT path ───────────────────────────
 
-def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
+def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_ratio: str = "story") -> dict:
     images_dir = _session_dir(slug) / "images"
     images_dir.mkdir(exist_ok=True)
     hero_path = images_dir / "hero.png"
@@ -410,34 +434,44 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
             {**debug, "underlying": e.details},
         )
 
-    # Explicitly enter Image mode via the + menu.
+    # Explicitly enter Image mode AND select the requested aspect ratio.
     #
-    # Multi-selector click: both clicks happen in the same actionbook
-    # subprocess so the menu can't close between them. Without this
-    # flow, we'd fall back to typing "Generate an image." as a regular
-    # message and hope ChatGPT routes to GPT-Image-2 — unreliable.
+    # All 4 clicks run inside a SINGLE actionbook subprocess via multi-
+    # selector syntax. This is required because each intermediate menu
+    # (the + menu and the aspect-ratio menu) closes on focus-loss — if
+    # split across separate subprocess calls (~1s inter-call latency),
+    # the second menu will already be closed by the time its option is
+    # clicked. One subprocess = DOM state stays consistent.
+    #
+    # Click order:
+    #   1. +       →  opens the attachments/tools menu
+    #   2. Create image  →  closes +menu, activates Image mode, shows aspect button
+    #   3. aspect ratio button  →  opens aspect-ratio menu
+    #   4. <aspect option>  →  selects it, closes aspect menu
+    aspect_xpath = ASPECT_XPATH[aspect_ratio]
+
     try:
         _run_ab(
             "browser", "click",
             SELECTORS["composer_plus_btn"],
             SELECTORS["menu_create_image"],
+            SELECTORS["aspect_ratio_btn"],
+            aspect_xpath,
             "--session", AB_SESSION,
-            timeout=15,
+            timeout=20,
         )
     except HeroError as e:
         debug = _dump_debug(slug)
         raise HeroError(
             "IMAGE_MODE_ENTRY_FAILED",
-            "Could not click + → Create image. The ChatGPT DOM may have "
-            "changed. Inspect debug HTML and update SELECTORS in "
-            f"illustrate.py. Debug: {debug['debug_html']}.",
-            {**debug, "underlying": e.details},
+            "Could not click + → Create image → aspect → <ratio>. The "
+            "ChatGPT DOM may have changed. Inspect debug HTML and update "
+            f"SELECTORS/ASPECT_XPATH in illustrate.py. Debug: {debug['debug_html']}.",
+            {**debug, "aspect_ratio": aspect_key, "underlying": e.details},
         )
 
     # Sanity check: composer placeholder should flip to "Describe or edit
-    # an image" once Create image is active. Soft-verify — if the selector
-    # doesn't match we still proceed (some ChatGPT variants may use a
-    # different placeholder).
+    # an image" once Create image is active. Soft-verify.
     try:
         _run_ab(
             "browser", "wait", "element",
@@ -463,10 +497,13 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
         timeout=15,
     )
 
-    # Wait for <img>
+    # Wait for the generated <img>. ChatGPT's image-mode response uses
+    # `alt="Generated image: ..."`, NOT a conventional data-message-author-role
+    # wrapper — the `img[alt^="Generated image"]` selector is the reliable
+    # one (verified 2026-04-23).
     try:
         _run_ab(
-            "browser", "wait", "element", SELECTORS["assistant_latest_img"],
+            "browser", "wait", "element", SELECTORS["assistant_generated_img"],
             "--session", AB_SESSION, "--timeout", str(IMAGE_WAIT_MS),
             timeout=IMAGE_WAIT_MS // 1000 + 30,
         )
@@ -491,7 +528,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
             code = "IMAGE_NOT_PRODUCED"
         raise HeroError(
             code,
-            f"No <img> appeared in {IMAGE_WAIT_MS // 1000}s. "
+            f"No generated <img> appeared in {IMAGE_WAIT_MS // 1000}s. "
             f"Assistant said: {assistant_text[:200]!r}. "
             f"Debug HTML: {debug['debug_html']}.",
             {**debug, "assistant_text": assistant_text,
@@ -501,7 +538,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
     # Extract img src
     try:
         r = _run_ab(
-            "browser", "html", SELECTORS["assistant_latest_img"],
+            "browser", "html", SELECTORS["assistant_generated_img"],
             "--session", AB_SESSION,
             timeout=15,
         )
@@ -520,46 +557,82 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
             "could not find src attribute in <img> tag",
             {"html_fragment": html_str[:300]},
         )
-    src_url = m.group(1)
+    # ChatGPT stores image URLs with HTML-entity-encoded ampersands; decode.
+    import html as html_mod
+    src_url = html_mod.unescape(m.group(1))
 
-    # Download: direct URL first, screenshot fallback
-    direct_err: Exception | None = None
+    # Download via actionbook eval: runs `fetch(src)` inside the logged-in
+    # Chrome tab, so cookies travel automatically. Returns base64. This is
+    # cleaner than urllib (which 403s on ChatGPT's estuary CDN) and richer
+    # than element screenshot (which captures UI chrome around the image).
+    js = (
+        "(async () => {"
+        "  try {"
+        f"    const r = await fetch({json.dumps(src_url)});"
+        "    if (!r.ok) return {error: 'HTTP ' + r.status};"
+        "    const buf = await r.arrayBuffer();"
+        "    const bytes = new Uint8Array(buf);"
+        "    let bin = '';"
+        "    for (let i=0; i<bytes.length; i++) bin += String.fromCharCode(bytes[i]);"
+        "    return {size: bytes.length, b64: btoa(bin)};"
+        "  } catch (e) { return {error: String(e)}; }"
+        "})()"
+    )
     try:
-        req = urllib.request.Request(
-            src_url,
-            headers={"User-Agent": "Mozilla/5.0 (ascent-research hero)"},
+        eval_res = _run_ab(
+            "browser", "eval", js,
+            "--session", AB_SESSION,
+            timeout=60,
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = resp.read()
-        if len(data) < 1024:
-            raise RuntimeError(f"downloaded image too small ({len(data)} bytes)")
-        hero_path.write_bytes(data)
-    except Exception as e:
-        direct_err = e
-        logger.warning("direct download failed: %s — falling back to element screenshot", e)
-        try:
-            _run_ab(
-                "browser", "screenshot", str(hero_path),
-                "--session", AB_SESSION,
-                "--element", SELECTORS["assistant_latest_img"],
-                timeout=30,
-            )
-        except HeroError as se:
-            raise HeroError(
-                "DOWNLOAD_FAILED",
-                f"direct download failed ({direct_err}) AND element "
-                f"screenshot failed ({se.message})",
-                {"src_url": src_url,
-                 "direct_error": str(direct_err),
-                 "screenshot_error_details": se.details},
-            )
-
-    if not hero_path.exists() or hero_path.stat().st_size < 1024:
+    except HeroError as e:
+        debug = _dump_debug(slug)
         raise HeroError(
             "DOWNLOAD_FAILED",
-            f"hero.png missing or too small after download ({hero_path})",
+            f"actionbook eval for image fetch failed: {e.message}",
+            {**debug, "src_url": src_url, "underlying": e.details},
+        )
+
+    result = (eval_res.get("data") or {}).get("value") or (eval_res.get("data") or {}).get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            pass
+    if not isinstance(result, dict):
+        raise HeroError(
+            "DOWNLOAD_FAILED",
+            f"unexpected eval result shape: {type(result).__name__}",
+            {"src_url": src_url, "eval_result": str(result)[:200]},
+        )
+    if result.get("error"):
+        raise HeroError(
+            "DOWNLOAD_FAILED",
+            f"in-browser fetch failed: {result['error']}",
             {"src_url": src_url},
         )
+    b64 = result.get("b64")
+    if not b64:
+        raise HeroError(
+            "DOWNLOAD_FAILED",
+            "eval returned no base64 payload",
+            {"src_url": src_url, "eval_keys": list(result.keys())},
+        )
+    import base64
+    try:
+        data = base64.b64decode(b64)
+    except Exception as e:
+        raise HeroError(
+            "DOWNLOAD_FAILED",
+            f"base64 decode failed: {e}",
+            {"src_url": src_url},
+        )
+    if len(data) < 1024:
+        raise HeroError(
+            "DOWNLOAD_FAILED",
+            f"downloaded image too small ({len(data)} bytes)",
+            {"src_url": src_url},
+        )
+    hero_path.write_bytes(data)
 
     # Prepend to md, write meta
     _prepend_hero_to_md(md_path)
@@ -571,8 +644,10 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
                 "slug": slug,
                 "via": "chatgpt",
                 "model": "gpt-image-2 (via chatgpt.com)",
+                "aspect_ratio": aspect_ratio,
                 "source_url": src_url,
                 "full_prompt": full_prompt,
+                "bytes": len(data),
             },
             indent=2,
         ),
@@ -587,6 +662,8 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path) -> dict:
             "source_url": src_url,
             "md_path": str(md_path),
             "meta": str(meta_path),
+            "aspect_ratio": aspect_ratio,
+            "bytes": len(data),
             "via": "chatgpt",
         },
     }
