@@ -267,6 +267,12 @@ def run_tool(name: str, args: dict, plugin_dir: Path) -> str:
     if name == "ascent_close" and not args.get("confirm"):
         return _error("ascent_close requires confirm=true — this marks the session closed.")
 
+    if name == "ascent_synthesize":
+        return _handle_synthesize(args)
+
+    if name == "ascent_illustrate_hero":
+        return _handle_illustrate_hero(args)
+
     builder = _BUILDERS.get(name)
     if builder is None:
         return _error(f"unknown tool '{name}'")
@@ -279,3 +285,85 @@ def run_tool(name: str, args: dict, plugin_dir: Path) -> str:
         return _error(f"invalid parameter: {exc}")
 
     return _run(argv, LONG_TIMEOUT_SEC.get(name, DEFAULT_TIMEOUT_SEC))
+
+
+def _handle_synthesize(args: dict) -> str:
+    """Chain `synthesize` (Rust) → `report --format brief-md` (Rust).
+
+    Returns the synthesize envelope augmented with `data.report_md` (the
+    featured markdown path) on success. If brief-md rendering fails the
+    synthesize envelope still returns ok but carries `data.report_md_error`.
+    """
+    synth_argv = _argv_synthesize(args)
+    synth_raw = _run(synth_argv, LONG_TIMEOUT_SEC.get("ascent_synthesize", 300))
+    try:
+        synth_env = json.loads(synth_raw)
+    except json.JSONDecodeError:
+        return synth_raw  # not JSON — shouldn't happen, but pass through
+
+    if not synth_env.get("ok"):
+        return synth_raw
+
+    slug = args.get("slug") or (synth_env.get("context") or {}).get("session")
+    if not slug:
+        synth_env.setdefault("data", {})["report_md_error"] = {
+            "code": "MD_RENDER_SKIPPED",
+            "message": "no slug resolved — skipped brief-md render",
+        }
+        return json.dumps(synth_env)
+
+    md_argv = [_binary(), "--json", "report", "--format", "brief-md", slug, "--no-open"]
+    md_raw = _run(md_argv, 60)
+    try:
+        md_env = json.loads(md_raw)
+    except json.JSONDecodeError:
+        synth_env.setdefault("data", {})["report_md_error"] = {
+            "code": "MD_RENDER_BAD_OUTPUT",
+            "message": "brief-md renderer returned non-JSON",
+        }
+        return json.dumps(synth_env)
+
+    if md_env.get("ok"):
+        md_data = md_env.get("data") or {}
+        md_path = (
+            md_data.get("output_path")
+            or md_data.get("path")
+            or str(
+                Path.home() / ".actionbook" / "ascent-research" / slug / "report-brief.md"
+            )
+        )
+        synth_env.setdefault("data", {})["report_md"] = md_path
+    else:
+        synth_env.setdefault("data", {})["report_md_error"] = md_env.get("error") or {
+            "code": "MD_RENDER_FAILED",
+            "message": "unknown",
+        }
+    return json.dumps(synth_env)
+
+
+def _handle_illustrate_hero(args: dict) -> str:
+    """Run the actionbook→ChatGPT hero image workflow, fail loudly."""
+    try:
+        from .illustrate import generate_hero, HeroError
+    except ImportError:
+        # Allow standalone import (e.g. py_compile in the plugin dir with no package parent).
+        from illustrate import generate_hero, HeroError  # type: ignore
+
+    try:
+        result = generate_hero(args or {})
+        return json.dumps(result)
+    except HeroError as exc:
+        return json.dumps(exc.as_envelope())
+    except Exception as exc:
+        logger.exception("ascent_illustrate_hero unexpected failure")
+        return json.dumps(
+            {
+                "ok": False,
+                "command": "ascent_illustrate_hero",
+                "error": {
+                    "code": "UNEXPECTED",
+                    "message": str(exc),
+                    "details": {"type": type(exc).__name__},
+                },
+            }
+        )
