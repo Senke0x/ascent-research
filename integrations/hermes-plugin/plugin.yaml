@@ -1,0 +1,4 @@
+name: ascent-research
+version: 0.1.0
+description: "Incremental deep research CLI. All web fetches routed through actionbook browser. Disable hermes 'browser' and 'web' toolsets."
+author: ascent-research
