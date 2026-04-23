@@ -1,0 +1,7 @@
+name = "actionbook-only"
+description = "Force every URL through actionbook browser. Zero postagent rules — every classify() call falls to the browser fallback. Used by the hermes-plugin integration."
+
+[fallback]
+kind = "browser-fallback"
+executor = "browser"
+template = 'browser new-tab "{url}"'
