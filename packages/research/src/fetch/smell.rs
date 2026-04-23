@@ -174,17 +174,49 @@ pub fn judge_browser_with(r: &BrowserResponse, cfg: SmellConfig) -> FetchOutcome
 }
 
 /// Normalize two URLs enough to compare: lowercase scheme+host, strip trailing
-/// slash, ignore query/fragment. A host-mismatch is a hard fail; path prefix
-/// match OK (the page might add query string).
+/// slash, ignore query/fragment.
+///
+/// A host mismatch is tolerated when the two hosts share the same
+/// registrable domain (e.g. `cookbook.openai.com → developers.openai.com`) —
+/// such cross-subdomain redirects are extremely common on vendor docs sites
+/// and were previously being killed as `WrongUrl`.
+///
+/// Path prefix match is OK (the page might add query string), but only when
+/// the *host* matches exactly. Once we're tolerating a subdomain change the
+/// canonical landing path often differs entirely (e.g. homepage) so a strict
+/// path-prefix check would defeat the redirect allowance.
 fn urls_compatible(requested: &str, observed: &str) -> bool {
     let (rh, rp) = split_host_path(requested);
     let (oh, op) = split_host_path(observed);
-    if rh != oh {
+    if rh == oh {
+        let rp_trim = rp.trim_end_matches('/');
+        let op_trim = op.trim_end_matches('/');
+        return op_trim == rp_trim || op_trim.starts_with(rp_trim);
+    }
+    // Hosts differ — allow if they share a registrable domain.
+    same_registrable_domain(&rh, &oh)
+}
+
+/// Very rough eTLD+1 comparison: take the last two dot-separated labels.
+///
+/// Intentionally simplistic — this covers the common case (`*.openai.com`,
+/// `*.github.io`, `*.arxiv.org`) and is correct for all single-label TLDs
+/// like `.com` / `.org` / `.net` / `.io` / `.ai` / `.dev`. It is *wrong* for
+/// two-part public suffixes like `.co.uk`, `.com.cn`, `.ne.jp` — those will
+/// collapse to "co.uk" etc. and any two sites on them will look compatible.
+/// For research-style allowlisted sources the error class is acceptable;
+/// swap in a real public-suffix list (e.g. the `publicsuffix` crate) if
+/// stricter semantics are needed later.
+fn same_registrable_domain(a: &str, b: &str) -> bool {
+    if a.is_empty() || b.is_empty() {
         return false;
     }
-    let rp_trim = rp.trim_end_matches('/');
-    let op_trim = op.trim_end_matches('/');
-    op_trim == rp_trim || op_trim.starts_with(rp_trim)
+    let a_labels: Vec<&str> = a.split('.').filter(|s| !s.is_empty()).collect();
+    let b_labels: Vec<&str> = b.split('.').filter(|s| !s.is_empty()).collect();
+    if a_labels.len() < 2 || b_labels.len() < 2 {
+        return a == b;
+    }
+    a_labels[a_labels.len() - 2..] == b_labels[b_labels.len() - 2..]
 }
 
 fn split_host_path(url: &str) -> (String, String) {
@@ -268,6 +300,48 @@ mod tests {
             requested_url: "https://a.com/",
             observed_url: "https://b.com/",
             body_bytes: &[b'x'; 1000],
+            readable_mode: true,
+        };
+        let o = judge_browser(&r);
+        assert_eq!(o.reject_reason, Some(RejectReason::WrongUrl));
+    }
+
+    #[test]
+    fn browser_same_registrable_domain_subdomain_redirect_accepts() {
+        // Common real-world redirect: cookbook.openai.com → developers.openai.com
+        let r = BrowserResponse {
+            requested_url: "https://cookbook.openai.com/examples/image",
+            observed_url: "https://developers.openai.com/cookbook/image",
+            body_bytes: &vec![b'x'; 1000],
+            readable_mode: true,
+        };
+        let o = judge_browser(&r);
+        assert!(
+            o.accepted,
+            "same-registrable-domain redirect should be accepted; reason: {:?}",
+            o.reject_reason
+        );
+    }
+
+    #[test]
+    fn browser_apex_to_www_redirect_accepts() {
+        let r = BrowserResponse {
+            requested_url: "https://openai.com/news",
+            observed_url: "https://www.openai.com/news",
+            body_bytes: &vec![b'x'; 1000],
+            readable_mode: true,
+        };
+        let o = judge_browser(&r);
+        assert!(o.accepted);
+    }
+
+    #[test]
+    fn browser_cross_registrable_domain_still_rejects() {
+        // openai.com → google.com is NOT a canonical redirect; must still fail.
+        let r = BrowserResponse {
+            requested_url: "https://openai.com/news",
+            observed_url: "https://google.com/",
+            body_bytes: &vec![b'x'; 1000],
             readable_mode: true,
         };
         let o = judge_browser(&r);

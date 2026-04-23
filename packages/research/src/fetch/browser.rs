@@ -135,11 +135,12 @@ pub fn run(
 
     // Step 2: wait network-idle. Cap wait's portion of the budget so a
     // never-idle page (common on Reddit / SPAs) doesn't starve the text
-    // step. 2/3 for wait, ≥ 4s reserved for text.
+    // step. 1/2 for wait, ≥ 5s reserved for the stronger ready-page wait
+    // + text + retries below.
     let remaining = budget_remaining(start, timeout_ms)?;
     let wait_budget = remaining
-        .saturating_sub(4_000)
-        .min(remaining * 2 / 3)
+        .saturating_sub(5_000)
+        .min(remaining / 2)
         .max(1_000);
     let r2 = one_step(
         &bin,
@@ -159,26 +160,127 @@ pub fn run(
     )?;
     // wait-idle timeout is tolerable (per B4 lesson) — don't hard-fail here
     if r2.exit_code != 0 {
-        // fall through; text step will validate observed state
+        // fall through; ready-page wait + text retry below will validate
     }
 
-    // Step 3: text. `--readable` was removed from actionbook ≥ 1.1.0 — we
-    // keep the parameter in this function's signature (upstream callers may
-    // still want to signal the intent) but no longer forward it to the
-    // subprocess. Readability extraction is performed downstream on the
-    // raw text body if needed.
+    // Step 2.5: wait until the tab has actually left about:blank / chrome-error
+    // and the document is at least past 'loading'. Without this, a fresh tab
+    // whose navigation is still resolving (302 chain, SPA hydration, login
+    // handshake) can pass wait-network-idle (no in-flight requests *yet*) and
+    // the text step then reads an empty about:blank document in <5 ms.
+    //
+    // This is the fix for the class of bug where raw files show
+    //   context.url = "about:blank", data.value = "", duration_ms = 3-4ms
+    // despite the page eventually loading correctly in the user's view.
+    let remaining_after_idle = budget_remaining(start, timeout_ms)?;
+    let ready_budget = remaining_after_idle
+        .saturating_sub(3_500) // keep budget for text + potential retries
+        .min(remaining_after_idle / 2)
+        .max(500);
+    let ready_condition = concat!(
+        "(function(){",
+        "var h = (location && location.href) || '';",
+        "if (!h || h === 'about:blank') return false;",
+        "if (h.indexOf('chrome-error:') === 0) return false;",
+        "if (h.indexOf('about:') === 0) return false;",
+        "if (document.readyState === 'loading') return false;",
+        "return !!(document.body);",
+        "})()"
+    );
+    let _ = one_step(
+        &bin,
+        &[
+            "browser",
+            "wait",
+            "condition",
+            ready_condition,
+            "--session",
+            &session,
+            "--tab",
+            &tab,
+            "--timeout",
+            &ready_budget.to_string(),
+            "--json",
+        ],
+        ready_budget,
+    );
+    // Ready-page wait is tolerable too — retry loop below will catch any
+    // lingering about:blank state without needing a hard fail here.
+
+    // Step 3: text, with a small retry loop for the specific case where the
+    // first read still lands on about:blank / an empty body. This happens
+    // when step 2.5 timed out without a real page commit (common on heavily
+    // redirecting/SPA pages). 3 attempts with 500/1000 ms gaps between
+    // retries. `--readable` was removed from actionbook ≥ 1.1.0 — we keep
+    // the parameter in this function's signature (upstream callers may still
+    // want to signal the intent) but no longer forward it to the subprocess.
+    // Readability extraction is performed downstream on the raw text body.
     let _ = readable;
-    let arg_refs: Vec<&str> = vec![
+    let text_args: [&str; 7] = [
         "browser", "text", "--session", &session, "--tab", &tab, "--json",
     ];
-    let r3 = one_step(&bin, &arg_refs, budget_remaining(start, timeout_ms)?)?;
-    if r3.exit_code != 0 {
-        return Err(format!(
-            "browser text exit {}; stderr: {}",
-            r3.exit_code,
-            String::from_utf8_lossy(&r3.raw_stderr)
-        ));
+    const MAX_TEXT_ATTEMPTS: usize = 3;
+    const RETRY_DELAYS_MS: [u64; 2] = [500, 1000];
+    let mut r3_final: Option<RawFetch> = None;
+    let mut last_observed_url = String::new();
+    let mut last_body: Vec<u8> = Vec::new();
+    for attempt in 0..MAX_TEXT_ATTEMPTS {
+        let r3 = one_step(&bin, &text_args, budget_remaining(start, timeout_ms)?)?;
+        if r3.exit_code != 0 {
+            // Hard actionbook failure — return immediately, no point retrying.
+            return Err(format!(
+                "browser text exit {}; stderr: {}",
+                r3.exit_code,
+                String::from_utf8_lossy(&r3.raw_stderr)
+            ));
+        }
+
+        // Parse envelope to check the observed state.
+        let v: Value = serde_json::from_slice(&r3.raw_stdout).map_err(|e| {
+            format!(
+                "actionbook browser text returned non-JSON: {e}; first 256 bytes: {}",
+                String::from_utf8_lossy(&r3.raw_stdout[..r3.raw_stdout.len().min(256)])
+            )
+        })?;
+        last_observed_url = v["context"]["url"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        last_body = v["data"]["value"]
+            .as_str()
+            .unwrap_or("")
+            .as_bytes()
+            .to_vec();
+
+        let looks_blank = last_observed_url.is_empty()
+            || last_observed_url.starts_with("about:")
+            || last_observed_url.starts_with("chrome-error:")
+            || last_observed_url == "null";
+        let body_tiny = last_body.len() < 50;
+
+        if !looks_blank && !body_tiny {
+            r3_final = Some(r3);
+            break;
+        }
+
+        // Last attempt — keep whatever we got, let smell test decide.
+        if attempt == MAX_TEXT_ATTEMPTS - 1 {
+            r3_final = Some(r3);
+            break;
+        }
+
+        // Back off and try again. Use saturating_sub so we don't overspend
+        // the per-call budget.
+        let delay = RETRY_DELAYS_MS[attempt.min(RETRY_DELAYS_MS.len() - 1)];
+        let rem = budget_remaining(start, timeout_ms).unwrap_or(0);
+        if rem <= delay + 500 {
+            // Not enough budget for another meaningful retry.
+            r3_final = Some(r3);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(delay));
     }
+    let r3 = r3_final.expect("text-step loop must run at least once");
 
     // Best-effort close-tab (ignore failure).
     let _ = one_step(
@@ -189,27 +291,10 @@ pub fn run(
         budget_remaining(start, timeout_ms).unwrap_or(2000),
     );
 
-    // Parse text step's JSON envelope for observed_url + body.
-    let v: Value = serde_json::from_slice(&r3.raw_stdout).map_err(|e| {
-        format!(
-            "actionbook browser text returned non-JSON: {e}; first 256 bytes: {}",
-            String::from_utf8_lossy(&r3.raw_stdout[..r3.raw_stdout.len().min(256)])
-        )
-    })?;
-    let observed_url = v["context"]["url"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-    let body = v["data"]["value"]
-        .as_str()
-        .unwrap_or("")
-        .as_bytes()
-        .to_vec();
-
     Ok(BrowserRun {
         raw: r3, // use text step as the "primary" raw (has envelope)
-        observed_url,
-        body,
+        observed_url: last_observed_url,
+        body: last_body,
     })
 }
 
