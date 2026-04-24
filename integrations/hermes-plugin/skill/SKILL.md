@@ -29,6 +29,28 @@ automatically, without forcing the user to name each tool by hand.
 4. **NEVER scout via search engines** (Google/Bing/DuckDuckGo). Go
    directly to known primary URLs or to stable search endpoints
    (HN Algolia, specific subreddit top pages, author blogs).
+5. **NEVER read, parse, or grep files under `~/.actionbook/ascent-research/`
+   with `execute_code` / `read_file` / `search_files` / `terminal`.** That
+   directory is this skill's internal session store. Direct access breaks
+   provenance tracking and is the #1 cause of runaway tool loops (observed
+   2026-04-24: session ran 18/120 iterations manually parsing raw fetch
+   JSON and never reached `ascent_synthesize`). To inspect a session use
+   `ascent_show` (full session.md), `ascent_wiki_show` / `ascent_wiki_list`
+   (wiki pages), `ascent_coverage` (completeness + blockers), or
+   `ascent_diff` (source usage). If a specific fact is missing from the
+   wiki, ask `ascent_wiki_query` — do NOT hand-roll a Python parser over
+   raw fetch JSON.
+6. **Close any browser tab you opened outside the `ascent_*` toolchain.**
+   `ascent_add` / `ascent_batch` already best-effort close-tab after each
+   fetch — those are fine. But any tab opened via `terminal`
+   (e.g. `actionbook browser new-tab ...`) or via hermes-native
+   `browser_*` MUST be closed explicitly:
+   `actionbook browser close-tab --session <SID> --tab <TID>`. Check
+   with `actionbook browser list-tabs --session research-local`; if the
+   shared session has 20+ tabs, reset the whole thing with
+   `actionbook browser close --session research-local` and let the next
+   `ascent_add` restart it. Excess tabs cause DOM-settle timeouts in
+   `ascent_illustrate_hero` (observed 2026-04-24).
 
 If you need to "debug why fetch failed", use `ascent_diff`,
 `ascent_coverage`, or just describe the failure to the user — do not
@@ -52,6 +74,23 @@ the Rust `ascent-research` binary and stores sessions under
 
 If any LLM step fails with an auth error, tell the user: "open `claude`
 (or `chatgpt.com`) and refresh the session, then retry."
+
+### Browser session (important for first-run)
+
+By default ascent tries to auto-start `research-<slug>` for each session,
+but the user's Chrome profile is usually already held by a long-lived
+`research-local` actionbook session. If `ascent_batch` / `ascent_add`
+returns `SESSION_NOT_FOUND: session 'research-<slug>' not found` or the
+typed error `browser profile already owned by session 'research-local'`,
+the fix is to reuse the existing session. The plugin handles this
+internally, but when invoking the binary directly from `terminal`, export
+it first:
+
+```
+export ACTIONBOOK_BROWSER_SESSION=research-local
+```
+
+Check with `actionbook browser list-sessions` before the first batch.
 
 ---
 
@@ -77,18 +116,49 @@ When the user invokes a research trigger, execute in order:
   - arXiv subject listing (`arxiv.org/list/cs.AI/new`)
 - If the user supplied specific URLs, use those.
 
-**Step 3 — Wiki query with a focused question**
-- `ascent_wiki_query {question, slug, save_as, format: "prose", provider: "claude"}`
-- Compose ONE synthesis question that references concrete dimensions
-  (architecture, viral examples, pricing, failure modes, etc.). Don't
-  just ask "summarize these sources" — be specific.
-- `save_as` slug should be `<topic>-overview` or similar.
+**Step 3 — Seed wiki + overview via loop_step (REQUIRED)**
+- `ascent_loop_step {slug, provider: "claude", max_actions: 8}`
+- One autonomous iteration — Claude reads SCHEMA.md + session state and
+  runs up to 8 actions: `read_source`, `write_wiki_page`,
+  `write_numbered_section`, etc.
+- **This step cannot be skipped.** `ascent_batch` only fetches raw
+  content; it does NOT populate the wiki. Without at least one
+  `loop_step` call, `ascent_wiki_query` returns `WIKI_EMPTY` and
+  `ascent_synthesize` returns `MISSING_OVERVIEW`.
+- Tuning: `max_actions: 3` (the old default) is usually too few — Claude
+  often spends them on `read_source` and never reaches
+  `write_wiki_page`. Use **8** as the first-call default. Empirically
+  (2026-04-24 demo): a single iter=2 CLI call at `max_actions: 8` →
+  3 wiki pages + 2 numbered sections + ~1200-char overview in ~130s,
+  enough for `synthesize` to succeed.
+- **If coverage still blocks, call again.** The synthesize line is
+  `overview_chars >= 1` AND `wiki_pages >= 1`. Most topics need **1-4
+  calls** to cross it; `report_ready: true` (which also needs 3+ numbered
+  sections, 1 resolved diagram, 0 unused sources) usually needs 3-5.
+  Whether Claude writes `## Overview` early or late is topic-dependent
+  and non-deterministic — announcement-type topics (product release,
+  paper drop) tend to get an overview on call 1; "snapshot" or "feedback
+  landscape" topics may delay it to call 3-4.
+- **hermes-specific gotcha (iter=1 cold-start penalty):** `ascent_loop_step`
+  hardcodes `iterations=1` in `cli.py:241`, so each call is a fresh
+  planning turn. A fresh turn is significantly more conservative than
+  staying inside one multi-iter run — 2026-04-24 measurements show two
+  separate `iter=1 max=8` calls producing ~3 actions total vs. one
+  `iter=2 max=8` call producing 6-8 actions. When `data.actions_executed
+  <= 2` on a call, **immediately call again** without waiting for
+  coverage re-check — the first call was just warming up. Expect 2-4
+  calls before the session is synthesize-able, not 1.
 
-**Step 4 — Loop step to patch gaps**
-- `ascent_loop_step {slug, provider: "claude", max_actions: 3}`
-- Single autonomous iteration — Claude reads SCHEMA.md + session state
-  and picks next actions (may fetch more sources, write wiki pages).
-- Skip this step when the user explicitly said "quick" or "fast".
+**Step 4 — Wiki query to deepen (OPTIONAL)**
+- `ascent_wiki_query {question, slug, save_as, format: "prose", provider: "claude"}`
+- ONLY after Step 3 — the wiki must have pages first. Compose ONE
+  synthesis question that references concrete dimensions (architecture,
+  viral examples, pricing, failure modes, etc.). Don't just ask
+  "summarize these sources" — be specific.
+- `save_as` slug should be `<topic>-overview` or similar; this adds a
+  `kind: analysis` page that `synthesize` will pull into `## Findings`.
+- Skip this step if the user said "quick" / "fast" — Step 3 alone
+  already produces a usable `synthesize`-able session.
 
 **Step 5 — Synthesize**
 - `ascent_synthesize {slug}`
@@ -113,13 +183,17 @@ Finally, tell the user:
 
 | User phrasing | Steps to execute |
 |---|---|
-| "research X", "investigate X", "deep dive on X" | 1 → 2 → 3 → 4 → 5 → 6 |
-| "quick look at X", "brief research on X" | 1 → 2 → 3 → 5  (skip 4 and 6) |
+| "research X", "investigate X", "deep dive on X" | 1 → 2 → 3 (2-5 calls, until `report_ready` or no more coverage progress) → 4 → 5 → 6 |
+| "quick look at X", "brief research on X" | 1 → 2 → 3 (keep calling until `overview_chars >= 1` AND `wiki_pages >= 1`, typically 1-4 calls) → 5  (skip 4 and 6) |
 | "rebuild / redo research on X" | cleanup via terminal `rm -rf ~/.actionbook/ascent-research/*` → 1 → 2 → 3 → 4 → 5 → 6 |
 | "add <url> to session X" | just `ascent_add` |
 | "ask wiki about X" (existing session) | just `ascent_wiki_query` |
 | "generate hero for session X" | just `ascent_illustrate_hero` |
 | "synthesize X" | `ascent_synthesize` (+ optional 6 if user mentions image) |
+
+Step 3 is **never** skippable — it's what populates the wiki. The only
+difference between "deep dive" and "quick look" is whether Step 4 runs
+and how many Step 3 calls you make.
 
 ---
 
@@ -193,6 +267,14 @@ user before any retry decision the user might want to override.
    steps if the user asks for more depth.
 5. For destructive cleanup (`rm -rf ~/.actionbook/ascent-research/*`),
    use the `terminal` tool and announce it clearly first.
+6. NEVER read files under `~/.actionbook/ascent-research/` directly with
+   `execute_code` / `read_file` / `search_files` / `terminal`. Use
+   `ascent_show` / `ascent_wiki_show` / `ascent_coverage` / `ascent_diff`
+   / `ascent_wiki_query` instead.
+7. Close browser tabs you opened outside `ascent_*`
+   (`actionbook browser close-tab --session <SID> --tab <TID>`). If the
+   shared session has 20+ tabs, reset it with
+   `actionbook browser close --session <SID>`.
 
 ---
 
@@ -205,8 +287,10 @@ You should execute automatically:
 
 1. `ascent_new {topic: "OpenAI GPT-5 capabilities — 2026-Q2 snapshot", slug: "gpt-5-caps", tags: ["openai", "gpt-5"]}`
 2. `ascent_batch {urls: ["https://openai.com/news/", "https://simonwillison.net/", "https://hn.algolia.com/?q=gpt-5", "https://news.ycombinator.com/"], slug: "gpt-5-caps"}`
-3. `ascent_wiki_query {question: "Summarize GPT-5's capability set, benchmarks, pricing tiers, and notable limitations from the fetched sources. Cite authors and URLs inline.", slug: "gpt-5-caps", save_as: "gpt-5-overview", format: "prose", provider: "claude"}`
-4. `ascent_loop_step {slug: "gpt-5-caps", provider: "claude", max_actions: 3}`
+3. `ascent_loop_step {slug: "gpt-5-caps", provider: "claude", max_actions: 8}`
+   — inspect `data.final_coverage`; if `overview_chars < 200` or
+   `wiki_pages == 0`, call `ascent_loop_step` once more with the same args.
+4. `ascent_wiki_query {question: "Summarize GPT-5's capability set, benchmarks, pricing tiers, and notable limitations. Cite authors and URLs inline.", slug: "gpt-5-caps", save_as: "gpt-5-overview", format: "prose", provider: "claude"}`
 5. `ascent_synthesize {slug: "gpt-5-caps"}`
 6. `ascent_illustrate_hero {slug: "gpt-5-caps"}`
 7. Report back: slug, MD path, hero.png path.
