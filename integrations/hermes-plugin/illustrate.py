@@ -33,12 +33,18 @@ logger = logging.getLogger(__name__)
 AB_SESSION = "ascent-hero-gen"
 
 APPLE_STYLE_SUFFIX = (
-    "Style: Apple-style editorial tech magazine cover — minimalist, "
+    "Style: editorial tech magazine cover in the spirit of The New Yorker "
+    "tech issue, Wired cover, or Apple Keynote hero slide — minimalist, "
     "matte finish, soft gradient background (slate to graphite to "
     "off-white, with ONE muted accent color, either warm bronze OR "
-    "cool teal, never both), a single strong geometric metaphor "
-    "centered, shallow depth via layered shapes, generous negative "
-    "space, 16:9 composition, NO text, NO logos, NO human faces."
+    "cool teal, never both). A single strong visual metaphor grounded in "
+    "the actual report subject, centered, shallow depth via layered "
+    "shapes. INCLUDE a short legible HEADLINE (2-5 words, bold sans-serif, "
+    "set clearly on the cover) that captures the report's core thesis; "
+    "optionally one smaller subheading line. The text must be integrated "
+    "into the composition, not pasted on. 16:9 composition with generous "
+    "negative space around the headline. NO logos, NO photorealistic "
+    "human faces."
 )
 
 SELECTORS = {
@@ -220,16 +226,20 @@ def _craft_prompt(slug: str, topic: str, override: str | None) -> str:
         return f"{override.strip()}. {APPLE_STYLE_SUFFIX}"
 
     question = (
-        "Draft an image-generation prompt (under 300 characters) for a "
-        f'hero cover illustration of a research report titled "{topic}". '
-        "Ground the visual metaphor in the actual research content of "
-        "this session — pick an image that would make a reader who saw "
-        "the cover instantly grok the topic, not a generic stock-ish "
-        "illustration. Focus on ONE strong visual metaphor. Do not "
-        'include the words "text", "logo", "typography", "face", or '
-        '"person" in the prompt. Output ONLY the prompt string — no '
-        "prefix, no quotes, no explanation, no leading/trailing "
-        "whitespace."
+        "Draft an image-generation prompt (under 400 characters) for an "
+        f'editorial magazine-style hero cover of a research report titled "{topic}". '
+        "The cover MUST include both: "
+        "(a) a short HEADLINE of 2-5 words in bold sans-serif type that "
+        "captures the core thesis or finding of this specific report "
+        "(not a generic phrase — it should be substantive, like "
+        '"Benchmark jump" or "Editing wins, not generation", quoted '
+        "from the actual report content); and "
+        "(b) ONE strong visual metaphor grounded in the actual research "
+        "subject, not a stock-ish illustration. A reader seeing this "
+        "cover should instantly grok what the report is about. "
+        "Do not include the words \"logo\" or \"photorealistic face\" "
+        "in the prompt. Output ONLY the prompt string — no prefix, no "
+        "quotes, no explanation, no leading/trailing whitespace."
     )
     argv = [
         _ascent_bin(), "--json", "wiki", "query", question,
@@ -398,7 +408,19 @@ def generate_hero(args: dict) -> dict:
 
     try:
         return _generate_via_chatgpt(slug, full_prompt, md_path, aspect_ratio)
-    except HeroError as chatgpt_err:
+    except HeroError as first_err:
+        # Cold-start Chrome can't always hit network-idle within 45s on the
+        # first try after we close all sessions. Second attempt is almost
+        # always fast because the profile is warm. Retry once transparently.
+        if first_err.code == "CHATGPT_LOAD_TIMEOUT":
+            logger.warning(
+                "CHATGPT_LOAD_TIMEOUT on cold start — retrying once warm"
+            )
+            try:
+                return _generate_via_chatgpt(slug, full_prompt, md_path, aspect_ratio)
+            except HeroError as retry_err:
+                first_err = retry_err  # fall through to FLUX fallback below
+        chatgpt_err = first_err
         if not args.get("use_flux_fallback"):
             raise
         logger.warning(
@@ -436,17 +458,30 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
 
     # Always regenerate per user policy (no skip-if-exists).
 
-    # Fresh session: close any stale ascent-hero-gen (with tabs from prior
-    # runs or from a just-closed research-local — actionbook inherits tabs
-    # across session switches in extension mode), then start it with a
-    # dedicated ChatGPT tab. This keeps the session-level wait network-idle
-    # viable (otherwise N tabs = never idle).
+    # Fresh session: close ALL running actionbook sessions (not just our own)
+    # because the Chrome profile is exclusive — if `research-local` (used by
+    # ascent_batch) or any other session is running, our `browser start` below
+    # will fail with "session was closed while command was pending" / profile
+    # conflict. Hero generation needs the profile to itself for ChatGPT login.
+    try:
+        sess_env = _run_ab("browser", "list-sessions", timeout=10)
+        sessions = (sess_env.get("data") or {}).get("sessions") or []
+        for s in sessions:
+            sid = s.get("session_id") or s.get("id") or s.get("session")
+            if sid:
+                try:
+                    _run_ab("browser", "close", "--session", sid, timeout=15)
+                except HeroError:
+                    pass  # best-effort
+    except HeroError:
+        pass  # list-sessions failed — proceed and let start handle it
+    # Also explicitly close our own session name in case list-sessions missed it
     try:
         _run_ab(
             "browser", "close", "--session", AB_SESSION, timeout=15,
         )
     except HeroError:
-        pass  # no prior session — fine
+        pass
     try:
         _run_ab(
             "browser", "start",
