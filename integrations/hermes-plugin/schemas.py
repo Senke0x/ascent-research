@@ -86,19 +86,21 @@ ADD_LOCAL = {
 SYNTHESIZE = {
     "name": "ascent_synthesize",
     "description": (
-        "Synthesize the session into a markdown report. Chains: Rust "
-        "`synthesize` → `report --format brief-md`. Produces "
-        "report.json (canonical data), report-brief.md (FEATURED "
-        "output — pass this path to the user / to ascent_illustrate_hero), "
-        "and report.html (byproduct, not featured). Long-running; costs "
-        "LLM tokens only if 'bilingual' is true."
+        "Finalize the session: runs Rust `synthesize` which writes "
+        "report.json (canonical data) and report.html (byproduct). "
+        "The featured human-readable artifact is session.md, which the "
+        "loop has been authoring all along — its path is returned as "
+        "`data.session_md` in the envelope. Pass THIS path to the user "
+        "/ to ascent_illustrate_hero. No brief-md short summary is "
+        "produced any more (it was losing nuance that session.md has). "
+        "Long-running; costs LLM tokens only if 'bilingual' is true."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "slug": {"type": "string", "description": "Session slug. Defaults to active."},
             "bilingual": {"type": "boolean", "description": "Render Chinese translations alongside English. Requires a working Claude provider (via logged-in `claude` CLI)."},
-            "no_render": {"type": "boolean", "description": "Skip HTML rendering; produce report.json only. Markdown render still runs."},
+            "no_render": {"type": "boolean", "description": "Skip HTML rendering; produce report.json only."},
         },
     },
 }
@@ -109,15 +111,18 @@ ILLUSTRATE_HERO = {
         "Generate a single Apple-style hero cover image for a synthesized "
         "session by driving the user's ChatGPT session via actionbook "
         "(real GPT-Image-2, no API key — uses the user's logged-in "
-        "browser profile). Prepends `![hero](images/hero.png)` to "
-        "report-brief.md on success. "
+        "browser profile). The image prompt is drafted by Claude against "
+        "the session's wiki / SCHEMA.md / session state, so the cover "
+        "reflects what the research is actually about. Writes "
+        "`<slug>/images/hero.png` and `<slug>/images/hero.meta.json`. "
+        "Does NOT mutate session.md — if the user wants to inline the "
+        "hero, they can add the markdown reference themselves. "
         "PREREQUISITE: ascent_synthesize has already run for this slug. "
         "PREREQUISITE: user is logged into chatgpt.com in the Chrome "
         "profile actionbook drives. "
         "POLICY: always overwrites any existing hero. Fails LOUDLY with "
-        "typed error codes — the markdown is never mutated until a valid "
-        "image is on disk, so it is safe to retry by simply calling this "
-        "tool again."
+        "typed error codes — session.md is never mutated, so it is safe "
+        "to retry by simply calling this tool again."
     ),
     "parameters": {
         "type": "object",

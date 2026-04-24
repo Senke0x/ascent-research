@@ -92,8 +92,8 @@ When the user invokes a research trigger, execute in order:
 
 **Step 5 — Synthesize**
 - `ascent_synthesize {slug}`
-- Produces `report.json` (canonical) + `report-brief.md` (featured) +
-  `report.html` (byproduct). Return `data.report_md` path to the user.
+- Produces `report.json` (canonical) + `session.md` (featured) +
+  `report.html` (byproduct). Return `data.session_md` path to the user.
 
 **Step 6 — Hero cover image (optional by request)**
 - `ascent_illustrate_hero {slug}` — Apple-style editorial cover via
@@ -106,7 +106,7 @@ When the user invokes a research trigger, execute in order:
 
 Finally, tell the user:
 - slug
-- `report-brief.md` path
+- `session.md` path
 - `hero.png` path (or which error prevented it)
 
 ## User intent → which steps
@@ -148,7 +148,7 @@ Finally, tell the user:
 - `ascent_schema_show` — print user-authored SCHEMA.md
 
 ### Generation (featured: MD, byproduct: HTML)
-- `ascent_synthesize` — session → report.json + report-brief.md (+html byproduct)
+- `ascent_synthesize` — session → report.json + session.md (+html byproduct)
 - `ascent_illustrate_hero` — Apple-style hero via ChatGPT/GPT-Image-2, prepends `![hero]` to MD
 - `ascent_loop_step` — ONE autonomous iteration (not full loop)
 
@@ -171,7 +171,7 @@ When a tool returns `ok: false` with a typed `error.code`, handle:
 | `IMAGE_NOT_PRODUCED` (illustrate_hero) | Retry once with `use_flux_fallback: true`; if still fails, tell user to inspect `images/hero-debug.html` |
 | `PROMPT_DRAFT_FAILED` (illustrate_hero) | Tell user to run `claude` interactively once to refresh session, then retry |
 | `PROVIDER_NOT_AVAILABLE` (loop_step / wiki_query) | Confirm binary was built with `--features provider-claude`; tell user to run `claude` once if session stale |
-| `REPORT_MD_MISSING` (illustrate_hero) | Call `ascent_synthesize` first; then retry |
+| `SESSION_MD_MISSING` (illustrate_hero) | Call `ascent_synthesize` first; then retry |
 | `browser profile already owned` (any actionbook step) | `export ACTIONBOOK_BROWSER_SESSION=<holder>` in the relevant tool, or close the owning session |
 
 **Do NOT silently swallow errors.** Surface the code + message to the
@@ -224,7 +224,7 @@ When reporting back, use this format:
 
 ```
 Session: <slug>
-Report: <absolute path to report-brief.md>
+Report: <absolute path to session.md>
 Hero:   <absolute path to hero.png>   (or "skipped: <reason>")
 Wiki pages written: <N>
 Sources accepted: <N>
