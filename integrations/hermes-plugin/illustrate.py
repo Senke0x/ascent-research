@@ -33,18 +33,19 @@ logger = logging.getLogger(__name__)
 AB_SESSION = "ascent-hero-gen"
 
 APPLE_STYLE_SUFFIX = (
-    "Style: editorial tech magazine cover in the spirit of The New Yorker "
-    "tech issue, Wired cover, or Apple Keynote hero slide — minimalist, "
-    "matte finish, soft gradient background (slate to graphite to "
-    "off-white, with ONE muted accent color, either warm bronze OR "
-    "cool teal, never both). A single strong visual metaphor grounded in "
-    "the actual report subject, centered, shallow depth via layered "
-    "shapes. INCLUDE a short legible HEADLINE (2-5 words, bold sans-serif, "
-    "set clearly on the cover) that captures the report's core thesis; "
-    "optionally one smaller subheading line. The text must be integrated "
-    "into the composition, not pasted on. 16:9 composition with generous "
-    "negative space around the headline. NO logos, NO photorealistic "
-    "human faces."
+    "Style: Apple keynote info poster. 9:16 vertical composition. "
+    "Clean matte background (soft off-white to pale slate gradient, ONE "
+    "muted accent color such as bronze OR teal, never both). Tight, "
+    "information-dense layout — like an Apple product feature page "
+    "compressed onto one portrait poster: large bold headline at top "
+    "(2-6 words, SF-Pro-Display-style sans-serif), short subhead line "
+    "below, then a dense vertical stack or tight grid of 4-6 small "
+    "modular panels (each panel = a section title + a one-line "
+    "takeaway, with a small numeric label or icon). Typography is the "
+    "primary design element; visual accents are geometric (circles, "
+    "arcs, thin lines) rather than photographic. Tight kerning, clear "
+    "hierarchy, plenty of negative space between panels. NO logos, NO "
+    "photorealistic human faces, NO stock imagery."
 )
 
 SELECTORS = {
@@ -70,12 +71,15 @@ SELECTORS = {
 
 # XPath per aspect-ratio label — keys match ILLUSTRATE_HERO.aspect_ratio enum.
 ASPECT_XPATH = {
-    "auto": '//div[@role="menuitemradio" and descendant::div[text()="Auto"]]',
-    "square": '//div[@role="menuitemradio" and descendant::div[text()="Square 1:1"]]',
-    "portrait": '//div[@role="menuitemradio" and descendant::div[text()="Portrait 3:4"]]',
-    "story": '//div[@role="menuitemradio" and descendant::div[text()="Story 9:16"]]',
-    "landscape": '//div[@role="menuitemradio" and descendant::div[text()="Landscape 4:3"]]',
-    "widescreen": '//div[@role="menuitemradio" and descendant::div[text()="Widescreen 16:9"]]',
+    # Fuzzy-match aspect options by ratio substring — ChatGPT DOM labels
+    # drift (e.g. "Story 9:16" → just "9:16" or "Portrait 9:16"), so we
+    # match the ratio substring which is more stable.
+    "auto": '//div[@role="menuitemradio"][contains(., "Auto")]',
+    "square": '//div[@role="menuitemradio"][contains(., "1:1")]',
+    "portrait": '//div[@role="menuitemradio"][contains(., "3:4")]',
+    "story": '//div[@role="menuitemradio"][contains(., "9:16")]',
+    "landscape": '//div[@role="menuitemradio"][contains(., "4:3")]',
+    "widescreen": '//div[@role="menuitemradio"][contains(., "16:9")]',
 }
 
 PROMPT_DRAFT_TIMEOUT_SEC = 180
@@ -214,32 +218,40 @@ def _read_topic(report_json: Path) -> str:
 
 
 def _craft_prompt(slug: str, topic: str, override: str | None) -> str:
-    """Draft the ChatGPT image prompt. Override skips Claude.
+    """Draft the ChatGPT image prompt.
 
-    The wiki query runs against the session's wiki pages; Claude also sees
-    the session's SCHEMA.md and session metadata via wiki_query's normal
-    context assembly, so the topic + wiki material + recent session state
-    are all available. That's a richer signal than feeding session.md
-    verbatim would be.
+    Uses `ascent wiki query` so Claude sees the wiki pages + SCHEMA.md +
+    session metadata. The question asks for a multi-panel Apple-style
+    info poster prompt (headline + 4-6 compressed panels, one per
+    section of the report). This produces a vertical 9:16 poster that
+    visually summarises the whole report in one image, not just a cover.
     """
     if override:
         return f"{override.strip()}. {APPLE_STYLE_SUFFIX}"
 
     question = (
-        "Draft an image-generation prompt (under 400 characters) for an "
-        f'editorial magazine-style hero cover of a research report titled "{topic}". '
-        "The cover MUST include both: "
-        "(a) a short HEADLINE of 2-5 words in bold sans-serif type that "
-        "captures the core thesis or finding of this specific report "
-        "(not a generic phrase — it should be substantive, like "
-        '"Benchmark jump" or "Editing wins, not generation", quoted '
-        "from the actual report content); and "
-        "(b) ONE strong visual metaphor grounded in the actual research "
-        "subject, not a stock-ish illustration. A reader seeing this "
-        "cover should instantly grok what the report is about. "
-        "Do not include the words \"logo\" or \"photorealistic face\" "
-        "in the prompt. Output ONLY the prompt string — no prefix, no "
-        "quotes, no explanation, no leading/trailing whitespace."
+        "Draft an image-generation prompt (under 700 characters) for a "
+        "9:16 VERTICAL Apple-style information poster that compresses "
+        f'the ENTIRE research report titled "{topic}" into a single image. '
+        "The poster MUST include: "
+        "(1) a large HEADLINE of 2-6 words at the top in bold sans-serif "
+        "that captures the report's core thesis — use substantive "
+        'language from the report (e.g. "Benchmark jump, premium price"), '
+        "not a generic phrase; "
+        "(2) a short SUBHEAD line below the headline; "
+        "(3) a tight vertical stack OR 2-column compact grid of 4-6 "
+        "MODULAR PANELS, one per numbered section of the report. Each "
+        "panel must have a small number label (01, 02, ...), a 2-4 word "
+        "section title, and a one-line takeaway quoted or distilled from "
+        "that section's actual content (specific, not generic); "
+        "(4) a small footer with the source count; "
+        "(5) clean Apple-keynote aesthetic — off-white/pale-slate "
+        "background, ONE muted accent color, typography is the primary "
+        "design, geometric (not photographic) visual accents. "
+        "Enumerate the 4-6 panels in your prompt with actual content from "
+        "the wiki (section title + takeaway), not placeholders. "
+        "Output ONLY the prompt string — no prefix, no quotes, no "
+        "explanation, no leading/trailing whitespace."
     )
     argv = [
         _ascent_bin(), "--json", "wiki", "query", question,
@@ -547,32 +559,54 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
             {**debug, "underlying": e.details},
         )
 
-    # Enter Image mode via a 2-click chain (+ → Create image). We no longer
-    # open the aspect-ratio submenu because the option labels (e.g. "Story
-    # 9:16") stopped matching the ChatGPT DOM as of 2026-04-24, and the
-    # submenu closes on focus-loss so we can't easily probe for new names.
-    # ChatGPT falls back to Auto aspect — acceptable for hero covers.
+    # Enter Image mode AND select the requested aspect ratio. All 4 clicks
+    # must run inside ONE actionbook subprocess via multi-selector syntax
+    # because intermediate menus (the + menu and the aspect-ratio menu)
+    # close on focus-loss — splitting into separate subprocess calls (~1s
+    # latency each) would find the second menu already closed.
     #
-    # Both clicks run inside ONE actionbook subprocess via multi-selector
-    # syntax so the + menu doesn't close between the clicks.
-    _ = aspect_ratio  # parameter kept for API compat; currently unused
+    # Click order:
+    #   1. +                       opens the attachments/tools menu
+    #   2. Create image            closes +menu, activates Image mode, shows aspect button
+    #   3. aspect ratio button     opens aspect-ratio menu
+    #   4. <aspect option>         selects requested ratio, closes menu
+    aspect_xpath = ASPECT_XPATH.get(aspect_ratio) or ASPECT_XPATH["story"]
     try:
         _run_ab(
             "browser", "click",
             SELECTORS["composer_plus_btn"],
             SELECTORS["menu_create_image"],
+            SELECTORS["aspect_ratio_btn"],
+            aspect_xpath,
             "--session", AB_SESSION, "--tab", ab_tab,
             timeout=45,
         )
     except HeroError as e:
-        debug = _dump_debug(slug, tab=ab_tab)
-        raise HeroError(
-            "IMAGE_MODE_ENTRY_FAILED",
-            "Could not click + → Create image. The ChatGPT DOM may have "
-            "changed. Inspect debug HTML and update SELECTORS in "
-            f"illustrate.py. Debug: {debug['debug_html']}.",
-            {**debug, "underlying": e.details},
+        # Aspect-selection is nice-to-have — if the 4th click fails because
+        # ChatGPT's aspect menu labels moved again, fall back to the 2-click
+        # chain (+ → Create image only) with default Auto aspect. Prompt
+        # will still request 9:16 composition, model may approximate.
+        logger.warning(
+            "4-click aspect chain failed (%s) — falling back to 2-click with Auto aspect",
+            e.message[:120],
         )
+        try:
+            _run_ab(
+                "browser", "click",
+                SELECTORS["composer_plus_btn"],
+                SELECTORS["menu_create_image"],
+                "--session", AB_SESSION, "--tab", ab_tab,
+                timeout=45,
+            )
+        except HeroError as e2:
+            debug = _dump_debug(slug, tab=ab_tab)
+            raise HeroError(
+                "IMAGE_MODE_ENTRY_FAILED",
+                "Could not click + → Create image. The ChatGPT DOM may have "
+                "changed. Inspect debug HTML and update SELECTORS in "
+                f"illustrate.py. Debug: {debug['debug_html']}.",
+                {**debug, "underlying": e2.details},
+            )
 
     # Sanity check: composer placeholder should flip to "Describe or edit
     # an image" once Create image is active. Soft-verify.
