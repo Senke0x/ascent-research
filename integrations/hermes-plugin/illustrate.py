@@ -73,10 +73,11 @@ ASPECT_XPATH = {
 }
 
 PROMPT_DRAFT_TIMEOUT_SEC = 180
-# Bumped 30→45: the 4-click chain (+/Create image/aspect/ratio) needs DOM
-# settle between sub-clicks; 30s left no headroom on a busy research-local
-# session with 20+ tabs (observed as ACTIONBOOK_TIMEOUT 2026-04-24).
-AB_STEP_TIMEOUT_SEC = 45
+# 60s per step: 2-click chain (+ / Create image) + type + waits + DOM settle.
+# 2026-04-24: reduced chain from 4 clicks to 2 — aspect-ratio submenu was
+# brittle (selectors for "Story 9:16" etc. stopped matching current DOM);
+# we now let ChatGPT use its default Auto aspect. See ASPECT_XPATH comment.
+AB_STEP_TIMEOUT_SEC = 60
 IMAGE_WAIT_MS = 180_000  # ChatGPT GPT-Image-2 can take 30-90s
 
 
@@ -305,16 +306,33 @@ def _craft_prompt(slug: str, topic: str, override: str | None) -> str:
     return f"{draft}. {APPLE_STYLE_SUFFIX}"
 
 
-def _dump_debug(slug: str) -> dict:
-    """Best-effort dump of page HTML + screenshot for post-mortem."""
+def _dump_debug(slug: str, tab: str | None = None) -> dict:
+    """Best-effort dump of page HTML + screenshot for post-mortem.
+
+    actionbook extension mode requires --tab on html/screenshot. If the
+    caller didn't track a tab_id, fall back to the first tab in the
+    session.
+    """
     images_dir = _session_dir(slug) / "images"
     images_dir.mkdir(exist_ok=True)
     debug_html = images_dir / "hero-debug.html"
     debug_png = images_dir / "hero-debug.png"
+    if tab is None:
+        try:
+            tabs_env = _run_ab(
+                "browser", "list-tabs", "--session", AB_SESSION, timeout=10,
+            )
+            tabs = (tabs_env.get("data") or {}).get("tabs") or []
+            tab = tabs[0]["tab_id"] if tabs else None
+        except Exception as e:
+            logger.debug("list-tabs for debug dump failed: %s", e)
+            tab = None
+    if tab is None:
+        return {"debug_html": str(debug_html), "debug_png": str(debug_png)}
     try:
         r = _run_ab(
             "browser", "html", "body",
-            "--session", AB_SESSION, timeout=15,
+            "--session", AB_SESSION, "--tab", tab, timeout=15,
         )
         debug_html.write_text(
             (r.get("data") or {}).get("value", ""),
@@ -325,7 +343,7 @@ def _dump_debug(slug: str) -> dict:
     try:
         _run_ab(
             "browser", "screenshot", str(debug_png),
-            "--session", AB_SESSION, "--full",
+            "--session", AB_SESSION, "--tab", tab, "--full",
             timeout=30,
         )
     except Exception as e:
@@ -418,23 +436,61 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
 
     # Always regenerate per user policy (no skip-if-exists).
 
-    # Navigate to fresh chat
-    _run_ab(
-        "browser", "new-tab", "https://chatgpt.com/?new=chat",
-        "--session", AB_SESSION,
-        timeout=30,
-    )
+    # Fresh session: close any stale ascent-hero-gen (with tabs from prior
+    # runs or from a just-closed research-local — actionbook inherits tabs
+    # across session switches in extension mode), then start it with a
+    # dedicated ChatGPT tab. This keeps the session-level wait network-idle
+    # viable (otherwise N tabs = never idle).
+    try:
+        _run_ab(
+            "browser", "close", "--session", AB_SESSION, timeout=15,
+        )
+    except HeroError:
+        pass  # no prior session — fine
+    try:
+        _run_ab(
+            "browser", "start",
+            "--session", AB_SESSION,
+            "--open-url", "https://chatgpt.com/?new=chat",
+            timeout=30,
+        )
+    except HeroError as e:
+        raise HeroError(
+            "SESSION_START_FAILED",
+            f"could not start actionbook session '{AB_SESSION}': {e.message}",
+            {"underlying": e.details},
+        )
+
+    # Extract the auto-assigned tab_id — actionbook `browser start --tab-id`
+    # only accepts integers, so we let it pick and read back.
+    try:
+        tabs_env = _run_ab(
+            "browser", "list-tabs", "--session", AB_SESSION, timeout=10,
+        )
+        tabs = (tabs_env.get("data") or {}).get("tabs") or []
+        if not tabs:
+            raise HeroError(
+                "TAB_ENUMERATE_FAILED", "no tabs after start", {},
+            )
+        ab_tab = tabs[0]["tab_id"]  # e.g. "t1"
+    except HeroError:
+        raise
+    except Exception as e:
+        raise HeroError(
+            "TAB_ENUMERATE_FAILED", f"list-tabs failed: {e}", {},
+        )
+
     try:
         _run_ab(
             "browser", "wait", "network-idle",
-            "--session", AB_SESSION, "--timeout", "15000",
-            timeout=25,
+            "--session", AB_SESSION, "--tab", ab_tab, "--timeout", "45000",
+            timeout=55,
         )
     except HeroError as e:
-        _dump_debug(slug)
+        _dump_debug(slug, tab=ab_tab)
         raise HeroError(
             "CHATGPT_LOAD_TIMEOUT",
-            "ChatGPT did not reach network-idle in 15s",
+            "ChatGPT did not reach network-idle in 45s",
             {"underlying": e.details},
         )
 
@@ -442,54 +498,45 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
     try:
         _run_ab(
             "browser", "wait", "element", SELECTORS["prompt_textarea"],
-            "--session", AB_SESSION, "--timeout", "20000",
-            timeout=25,
+            "--session", AB_SESSION, "--tab", ab_tab, "--timeout", "30000",
+            timeout=35,
         )
     except HeroError as e:
-        debug = _dump_debug(slug)
+        debug = _dump_debug(slug, tab=ab_tab)
         raise HeroError(
             "NOT_LOGGED_IN",
-            "ChatGPT composer (#prompt-textarea) not found in 20s. "
+            "ChatGPT composer (#prompt-textarea) not found in 30s. "
             "Open https://chatgpt.com/ in your default Chrome profile "
             "(the one actionbook uses) and log in, then retry this "
             f"tool. Debug HTML: {debug['debug_html']}.",
             {**debug, "underlying": e.details},
         )
 
-    # Explicitly enter Image mode AND select the requested aspect ratio.
+    # Enter Image mode via a 2-click chain (+ → Create image). We no longer
+    # open the aspect-ratio submenu because the option labels (e.g. "Story
+    # 9:16") stopped matching the ChatGPT DOM as of 2026-04-24, and the
+    # submenu closes on focus-loss so we can't easily probe for new names.
+    # ChatGPT falls back to Auto aspect — acceptable for hero covers.
     #
-    # All 4 clicks run inside a SINGLE actionbook subprocess via multi-
-    # selector syntax. This is required because each intermediate menu
-    # (the + menu and the aspect-ratio menu) closes on focus-loss — if
-    # split across separate subprocess calls (~1s inter-call latency),
-    # the second menu will already be closed by the time its option is
-    # clicked. One subprocess = DOM state stays consistent.
-    #
-    # Click order:
-    #   1. +       →  opens the attachments/tools menu
-    #   2. Create image  →  closes +menu, activates Image mode, shows aspect button
-    #   3. aspect ratio button  →  opens aspect-ratio menu
-    #   4. <aspect option>  →  selects it, closes aspect menu
-    aspect_xpath = ASPECT_XPATH[aspect_ratio]
-
+    # Both clicks run inside ONE actionbook subprocess via multi-selector
+    # syntax so the + menu doesn't close between the clicks.
+    _ = aspect_ratio  # parameter kept for API compat; currently unused
     try:
         _run_ab(
             "browser", "click",
             SELECTORS["composer_plus_btn"],
             SELECTORS["menu_create_image"],
-            SELECTORS["aspect_ratio_btn"],
-            aspect_xpath,
-            "--session", AB_SESSION,
-            timeout=45,  # 4 clicks + DOM settle on a busy research-local session
+            "--session", AB_SESSION, "--tab", ab_tab,
+            timeout=45,
         )
     except HeroError as e:
-        debug = _dump_debug(slug)
+        debug = _dump_debug(slug, tab=ab_tab)
         raise HeroError(
             "IMAGE_MODE_ENTRY_FAILED",
-            "Could not click + → Create image → aspect → <ratio>. The "
-            "ChatGPT DOM may have changed. Inspect debug HTML and update "
-            f"SELECTORS/ASPECT_XPATH in illustrate.py. Debug: {debug['debug_html']}.",
-            {**debug, "aspect_ratio": aspect_ratio, "underlying": e.details},
+            "Could not click + → Create image. The ChatGPT DOM may have "
+            "changed. Inspect debug HTML and update SELECTORS in "
+            f"illustrate.py. Debug: {debug['debug_html']}.",
+            {**debug, "underlying": e.details},
         )
 
     # Sanity check: composer placeholder should flip to "Describe or edit
@@ -498,7 +545,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
         _run_ab(
             "browser", "wait", "element",
             SELECTORS["prompt_textarea_image_mode"],
-            "--session", AB_SESSION, "--timeout", "3000",
+            "--session", AB_SESSION, "--tab", ab_tab, "--timeout", "3000",
             timeout=8,
         )
     except HeroError:
@@ -510,12 +557,12 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
     # image." preamble needed — just the crafted prompt verbatim.
     _run_ab(
         "browser", "type", SELECTORS["prompt_textarea"], full_prompt,
-        "--session", AB_SESSION,
+        "--session", AB_SESSION, "--tab", ab_tab,
         timeout=30,
     )
     _run_ab(
         "browser", "press", "Enter",
-        "--session", AB_SESSION,
+        "--session", AB_SESSION, "--tab", ab_tab,
         timeout=15,
     )
 
@@ -526,16 +573,16 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
     try:
         _run_ab(
             "browser", "wait", "element", SELECTORS["assistant_generated_img"],
-            "--session", AB_SESSION, "--timeout", str(IMAGE_WAIT_MS),
+            "--session", AB_SESSION, "--tab", ab_tab, "--timeout", str(IMAGE_WAIT_MS),
             timeout=IMAGE_WAIT_MS // 1000 + 30,
         )
     except HeroError as e:
-        debug = _dump_debug(slug)
+        debug = _dump_debug(slug, tab=ab_tab)
         assistant_text = ""
         try:
             r = _run_ab(
                 "browser", "text", SELECTORS["assistant_latest"],
-                "--session", AB_SESSION,
+                "--session", AB_SESSION, "--tab", ab_tab,
                 timeout=15,
             )
             assistant_text = (r.get("data") or {}).get("value", "")[:500]
@@ -561,7 +608,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
     try:
         r = _run_ab(
             "browser", "html", SELECTORS["assistant_generated_img"],
-            "--session", AB_SESSION,
+            "--session", AB_SESSION, "--tab", ab_tab,
             timeout=15,
         )
         html_str = (r.get("data") or {}).get("value", "")
@@ -603,11 +650,11 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
     try:
         eval_res = _run_ab(
             "browser", "eval", js,
-            "--session", AB_SESSION,
+            "--session", AB_SESSION, "--tab", ab_tab,
             timeout=60,
         )
     except HeroError as e:
-        debug = _dump_debug(slug)
+        debug = _dump_debug(slug, tab=ab_tab)
         raise HeroError(
             "DOWNLOAD_FAILED",
             f"actionbook eval for image fetch failed: {e.message}",
