@@ -1,10 +1,11 @@
 """Hero cover image generation workflow.
 
 Drives actionbook to navigate to ChatGPT, prompts it to produce a
-GPT-Image-2 illustration, downloads the result, and prepends it to
-report-brief.md. Fails loud with typed error codes so the LLM/user
-can retry cleanly — the session's markdown is never mutated until a
-successful image is in hand.
+GPT-Image-2 illustration keyed to the research session's `session.md`,
+and downloads the result to `<slug>/images/hero.png`. Fails loud with
+typed error codes so the LLM/user can retry cleanly. Does NOT mutate
+any markdown — session.md stays purely authored content; if the user
+wants to reference hero.png they can add their own markdown link.
 
 Auth model: this workflow **does not** read any API key. It piggybacks
 on the user's existing ChatGPT session in the same Chrome profile that
@@ -72,7 +73,10 @@ ASPECT_XPATH = {
 }
 
 PROMPT_DRAFT_TIMEOUT_SEC = 180
-AB_STEP_TIMEOUT_SEC = 30
+# Bumped 30→45: the 4-click chain (+/Create image/aspect/ratio) needs DOM
+# settle between sub-clicks; 30s left no headroom on a busy research-local
+# session with 20+ tabs (observed as ACTIONBOOK_TIMEOUT 2026-04-24).
+AB_STEP_TIMEOUT_SEC = 45
 IMAGE_WAIT_MS = 180_000  # ChatGPT GPT-Image-2 can take 30-90s
 
 
@@ -161,10 +165,18 @@ def _run_ab(*args: str, timeout: int = AB_STEP_TIMEOUT_SEC) -> dict:
 
 
 def _ensure_synthesized(slug: str) -> tuple[Path, Path]:
-    """Return (report.json path, report-brief.md path). Raise if missing."""
+    """Return (report.json path, session.md path). Raise if either missing.
+
+    session.md is the canonical narrative (authored by the loop, includes
+    Objective/Sources/Overview/Findings/editorial sections); it's what
+    Claude reads to draft the image prompt. report.json is still required
+    because it contains the canonical topic string and confirms that
+    synthesize has actually run (report.json is only produced by synthesize,
+    session.md can exist from plain `ascent_new`).
+    """
     d = _session_dir(slug)
     report_json = d / "report.json"
-    md = d / "report-brief.md"
+    session_md = d / "session.md"
     if not report_json.exists():
         raise HeroError(
             "REPORT_JSON_MISSING",
@@ -172,14 +184,14 @@ def _ensure_synthesized(slug: str) -> tuple[Path, Path]:
             "Run ascent_synthesize first.",
             {"session_dir": str(d)},
         )
-    if not md.exists():
+    if not session_md.exists():
         raise HeroError(
-            "REPORT_MD_MISSING",
-            f"report-brief.md not found at {md}. Run ascent_synthesize "
-            "first (it now chains to render brief-md).",
+            "SESSION_MD_MISSING",
+            f"session.md not found at {session_md}. "
+            "This session appears corrupted.",
             {"session_dir": str(d)},
         )
-    return report_json, md
+    return report_json, session_md
 
 
 def _read_topic(report_json: Path) -> str:
@@ -195,17 +207,28 @@ def _read_topic(report_json: Path) -> str:
 
 
 def _craft_prompt(slug: str, topic: str, override: str | None) -> str:
-    """Draft the ChatGPT image prompt. Override skips Claude."""
+    """Draft the ChatGPT image prompt. Override skips Claude.
+
+    The wiki query runs against the session's wiki pages; Claude also sees
+    the session's SCHEMA.md and session metadata via wiki_query's normal
+    context assembly, so the topic + wiki material + recent session state
+    are all available. That's a richer signal than feeding session.md
+    verbatim would be.
+    """
     if override:
         return f"{override.strip()}. {APPLE_STYLE_SUFFIX}"
 
     question = (
         "Draft an image-generation prompt (under 300 characters) for a "
         f'hero cover illustration of a research report titled "{topic}". '
-        "Focus on ONE strong visual metaphor. Do not include the words "
-        '"text", "logo", "typography", "face", or "person" in the '
-        "prompt. Output ONLY the prompt string — no prefix, no quotes, "
-        "no explanation, no leading/trailing whitespace."
+        "Ground the visual metaphor in the actual research content of "
+        "this session — pick an image that would make a reader who saw "
+        "the cover instantly grok the topic, not a generic stock-ish "
+        "illustration. Focus on ONE strong visual metaphor. Do not "
+        'include the words "text", "logo", "typography", "face", or '
+        '"person" in the prompt. Output ONLY the prompt string — no '
+        "prefix, no quotes, no explanation, no leading/trailing "
+        "whitespace."
     )
     argv = [
         _ascent_bin(), "--json", "wiki", "query", question,
@@ -310,15 +333,14 @@ def _dump_debug(slug: str) -> dict:
     return {"debug_html": str(debug_html), "debug_png": str(debug_png)}
 
 
-def _prepend_hero_to_md(md_path: Path) -> None:
-    """Prepend ![hero](images/hero.png) line to report-brief.md (idempotent)."""
-    md_text = md_path.read_text(encoding="utf-8")
-    if md_text.lstrip().startswith("![hero]"):
-        return  # already present
-    md_path.write_text(
-        "![hero](images/hero.png)\n\n" + md_text,
-        encoding="utf-8",
-    )
+def _session_md_snippet(md_path: Path, max_chars: int = 200) -> str:
+    """Tiny excerpt for the return envelope so the caller can verify the
+    right session was used without us shipping the whole file back."""
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    return text.strip()[:max_chars]
 
 
 # ─────────────────────────── Main entry ───────────────────────────
@@ -406,7 +428,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
         _run_ab(
             "browser", "wait", "network-idle",
             "--session", AB_SESSION, "--timeout", "15000",
-            timeout=20,
+            timeout=25,
         )
     except HeroError as e:
         _dump_debug(slug)
@@ -458,7 +480,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
             SELECTORS["aspect_ratio_btn"],
             aspect_xpath,
             "--session", AB_SESSION,
-            timeout=20,
+            timeout=45,  # 4 clicks + DOM settle on a busy research-local session
         )
     except HeroError as e:
         debug = _dump_debug(slug)
@@ -467,7 +489,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
             "Could not click + → Create image → aspect → <ratio>. The "
             "ChatGPT DOM may have changed. Inspect debug HTML and update "
             f"SELECTORS/ASPECT_XPATH in illustrate.py. Debug: {debug['debug_html']}.",
-            {**debug, "aspect_ratio": aspect_key, "underlying": e.details},
+            {**debug, "aspect_ratio": aspect_ratio, "underlying": e.details},
         )
 
     # Sanity check: composer placeholder should flip to "Describe or edit
@@ -635,7 +657,10 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
     hero_path.write_bytes(data)
 
     # Prepend to md, write meta
-    _prepend_hero_to_md(md_path)
+    # NOTE: we intentionally do NOT mutate session.md. Users edit it directly;
+    # a hidden side-effect here would conflict with concurrent edits. If the
+    # user wants to inline the hero, they can add the markdown link
+    # themselves — hero.png is at a stable path relative to session.md.
     meta_path = images_dir / "hero.meta.json"
     meta_path.write_text(
         json.dumps(
@@ -660,7 +685,7 @@ def _generate_via_chatgpt(slug: str, full_prompt: str, md_path: Path, aspect_rat
         "data": {
             "hero_image": str(hero_path),
             "source_url": src_url,
-            "md_path": str(md_path),
+            "session_md_path": str(md_path),
             "meta": str(meta_path),
             "aspect_ratio": aspect_ratio,
             "bytes": len(data),
@@ -728,7 +753,10 @@ def _generate_via_flux(slug: str, full_prompt: str, md_path: Path) -> dict:
             {"img_url": img_url},
         )
 
-    _prepend_hero_to_md(md_path)
+    # NOTE: we intentionally do NOT mutate session.md. Users edit it directly;
+    # a hidden side-effect here would conflict with concurrent edits. If the
+    # user wants to inline the hero, they can add the markdown link
+    # themselves — hero.png is at a stable path relative to session.md.
     meta_path = images_dir / "hero.meta.json"
     meta_path.write_text(
         json.dumps(
@@ -751,7 +779,7 @@ def _generate_via_flux(slug: str, full_prompt: str, md_path: Path) -> dict:
         "data": {
             "hero_image": str(hero_path),
             "source_url": img_url,
-            "md_path": str(md_path),
+            "session_md_path": str(md_path),
             "meta": str(meta_path),
             "via": "flux-fallback",
         },

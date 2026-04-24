@@ -294,11 +294,14 @@ def run_tool(name: str, args: dict, plugin_dir: Path) -> str:
 
 
 def _handle_synthesize(args: dict) -> str:
-    """Chain `synthesize` (Rust) → `report --format brief-md` (Rust).
+    """Run Rust `synthesize` and expose `session.md` as the featured markdown.
 
-    Returns the synthesize envelope augmented with `data.report_md` (the
-    featured markdown path) on success. If brief-md rendering fails the
-    synthesize envelope still returns ok but carries `data.report_md_error`.
+    Previously chained to `report --format brief-md` to produce a derived
+    short summary — that turned out to lose nuance and the downstream
+    `ascent_illustrate_hero` step gets better material reading the full
+    `session.md` directly. Rust synthesize already writes report.json and
+    report.html; session.md was authored by the loop all along and lives
+    at a stable path. So we just surface that path in the envelope.
     """
     synth_argv = _argv_synthesize(args)
     synth_raw = _run(synth_argv, LONG_TIMEOUT_SEC.get("ascent_synthesize", 300))
@@ -311,39 +314,10 @@ def _handle_synthesize(args: dict) -> str:
         return synth_raw
 
     slug = args.get("slug") or (synth_env.get("context") or {}).get("session")
-    if not slug:
-        synth_env.setdefault("data", {})["report_md_error"] = {
-            "code": "MD_RENDER_SKIPPED",
-            "message": "no slug resolved — skipped brief-md render",
-        }
-        return json.dumps(synth_env)
-
-    md_argv = [_binary(), "--json", "report", "--format", "brief-md", slug, "--no-open"]
-    md_raw = _run(md_argv, 60)
-    try:
-        md_env = json.loads(md_raw)
-    except json.JSONDecodeError:
-        synth_env.setdefault("data", {})["report_md_error"] = {
-            "code": "MD_RENDER_BAD_OUTPUT",
-            "message": "brief-md renderer returned non-JSON",
-        }
-        return json.dumps(synth_env)
-
-    if md_env.get("ok"):
-        md_data = md_env.get("data") or {}
-        md_path = (
-            md_data.get("output_path")
-            or md_data.get("path")
-            or str(
-                Path.home() / ".actionbook" / "ascent-research" / slug / "report-brief.md"
-            )
-        )
-        synth_env.setdefault("data", {})["report_md"] = md_path
-    else:
-        synth_env.setdefault("data", {})["report_md_error"] = md_env.get("error") or {
-            "code": "MD_RENDER_FAILED",
-            "message": "unknown",
-        }
+    if slug:
+        session_md = Path.home() / ".actionbook" / "ascent-research" / slug / "session.md"
+        if session_md.exists():
+            synth_env.setdefault("data", {})["session_md"] = str(session_md)
     return json.dumps(synth_env)
 
 

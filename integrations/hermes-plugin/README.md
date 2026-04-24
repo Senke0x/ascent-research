@@ -85,8 +85,8 @@ active.
 | `ascent_add` | Fetch a URL via actionbook browser |
 | `ascent_batch` | Fetch multiple URLs concurrently |
 | `ascent_add_local` | Ingest a local file or directory tree |
-| `ascent_synthesize` | Render session into `report.json` + `report-brief.md` (featured); HTML still produced as byproduct |
-| `ascent_illustrate_hero` | Generate a single Apple-style hero cover via actionbook → ChatGPT (real GPT-Image-2, no API key); prepends to `report-brief.md` |
+| `ascent_synthesize` | Render session into `report.json` + `session.md` (featured); HTML still produced as byproduct |
+| `ascent_illustrate_hero` | Generate Apple-style hero cover via actionbook → ChatGPT (real GPT-Image-2, no API key); writes `images/hero.png` — does **not** mutate `session.md` |
 | `ascent_wiki_query` | Ask a question over the session's wiki pages |
 | `ascent_status` | Counts & timings |
 | `ascent_list` | List all sessions (filter by tag, optional tree) |
@@ -143,7 +143,8 @@ LLM providers do **not** read API key env vars — they piggyback on
 | `ascent_illustrate_hero` → `NOT_LOGGED_IN` | Open chatgpt.com in the Chrome profile actionbook drives and log in, then retry |
 | `ascent_illustrate_hero` → `RATE_LIMITED` / `CONTENT_POLICY` | ChatGPT declined — wait / upgrade, or retry with `prompt_override`, or set `use_flux_fallback: true` |
 | `ascent_illustrate_hero` → `IMAGE_NOT_PRODUCED` | Check `<slug>/images/hero-debug.html` + `hero-debug.png`; selectors may need updating in `illustrate.py::SELECTORS` |
-| `ascent_illustrate_hero` → `REPORT_MD_MISSING` | Run `ascent_synthesize` first — it chains `report --format brief-md` |
+| `ascent_illustrate_hero` → `SESSION_MD_MISSING` | Session dir is missing `session.md` (corrupted). Inspect `~/.actionbook/ascent-research/<slug>/`. |
+| `ascent_illustrate_hero` → `REPORT_JSON_MISSING` | Run `ascent_synthesize` first to produce `report.json` |
 
 ## Timeouts
 

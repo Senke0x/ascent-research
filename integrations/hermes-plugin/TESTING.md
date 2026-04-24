@@ -172,13 +172,13 @@ tail -5 ~/.actionbook/ascent-research/<slug>/session.jsonl | python3 -m json.too
 Synthesize this session into a report.
 ```
 
-**Expect**: `ascent_synthesize {slug}` produces `report.json` + `report-brief.md` (featured) + `report.html` (byproduct).
-Envelope's `data.report_md` points to the markdown path.
+**Expect**: `ascent_synthesize {slug}` produces `report.json` + `session.md` (featured) + `report.html` (byproduct).
+Envelope's `data.session_md` points to the markdown path.
 
 **Verify**:
 ```bash
 ls -la ~/.actionbook/ascent-research/<slug>/report*
-cat ~/.actionbook/ascent-research/<slug>/report-brief.md | head -30
+cat ~/.actionbook/ascent-research/<slug>/session.md | head -30
 ```
 
 ---
@@ -220,14 +220,14 @@ Generate a hero cover image for session <slug>.
 - Actionbook opens a new ChatGPT tab, types the prompt, waits
 - Image generates in 30-90s
 - `~/.actionbook/ascent-research/<slug>/images/hero.png` written
-- `report-brief.md` gets `![hero](images/hero.png)` prepended
+- `session.md` gets `![hero](images/hero.png)` prepended
 - Envelope `data.via: "chatgpt"` and `data.source_url: "..."`
 
 **Verify**:
 ```bash
 ls ~/.actionbook/ascent-research/<slug>/images/
 open ~/.actionbook/ascent-research/<slug>/images/hero.png
-head -3 ~/.actionbook/ascent-research/<slug>/report-brief.md
+head -3 ~/.actionbook/ascent-research/<slug>/session.md
 cat ~/.actionbook/ascent-research/<slug>/images/hero.meta.json
 ```
 
@@ -326,7 +326,7 @@ This should trigger, in order: `ascent_new` → `ascent_batch` → `ascent_wiki_
 - [ ] Step 1: all 16 tools visible in `/tools list`
 - [ ] Step 3: `actionbook browser list-sessions` shows `research-<slug>`
 - [ ] Step 5: `wiki/runtime-comparison.md` exists and has `kind: analysis`
-- [ ] Step 7: `report-brief.md` exists and has content
+- [ ] Step 7: `session.md` exists and has content
 - [ ] Step 7a: dry-run returns a sensible prompt preview
 - [ ] Step 7b: `hero.png` exists, MD has `![hero]` at top
 - [ ] Step 8: LLM declines or redirects the raw `browser` request
