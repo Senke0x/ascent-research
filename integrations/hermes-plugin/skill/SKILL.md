@@ -124,12 +124,20 @@ allowed use of `terminal` for an actionbook concern; hard rule 1
 forbids HTTP, not daemon management):
 
 ```bash
-actionbook daemon restart && sleep 3 && actionbook extension status
+actionbook daemon restart
+actionbook browser list-sessions   # MUST be a browser-* subcommand — only these auto-spawn the daemon after restart. `extension status` / `extension ping` do NOT trigger auto-spawn, so using them alone leaves bridge="not_listening" forever (observed 2026-04-24: the original fallback `daemon restart && sleep 3 && extension status` looked like it ran but never actually restarted the bridge).
+actionbook extension status        # verify
 ```
 
+Equivalent shortcut: after `daemon restart`, just retry the original
+`ascent_batch` / `ascent_add` — those internally call `browser new-tab`,
+which triggers daemon auto-spawn. The explicit `browser list-sessions`
+above is only there as a dedicated probe when you want to verify the
+bridge is back before retrying the fetch.
+
 If `actionbook extension status` still reports
-`extension_connected: false` after restart, THEN (and only then) tell
-the user:
+`extension_connected: false` after the browser-* call, THEN (and only
+then) tell the user:
 
 > Chrome extension isn't connecting. Open the Actionbook extension
 > popup in Chrome and click Connect, then reply `done`.
