@@ -51,6 +51,24 @@ automatically, without forcing the user to name each tool by hand.
    `actionbook browser close --session research-local` and let the next
    `ascent_add` restart it. Excess tabs cause DOM-settle timeouts in
    `ascent_illustrate_hero` (observed 2026-04-24).
+7. **NEVER cite a URL in `## Overview`, numbered sections, wiki page
+   bodies, or any synthesized output unless you have successfully
+   fetched it** — meaning `ascent_add` or `ascent_batch` returned
+   `ok: true` with a non-null `raw_path` for that exact URL in the
+   current session. Citing a URL you haven't fetched triggers the
+   `sources_hallucinated` blocker in `ascent_coverage`, keeps
+   `report_ready: false`, and produces a report with fake citations
+   that are **indistinguishable from fabrication** from the reader's
+   perspective — even if the URL happens to exist publicly.
+   Workflow: if you want to cite a URL not yet in the session, call
+   `ascent_add {url}` first; if it returns `ok: false`, DROP the
+   citation entirely and substitute content from a URL you did fetch.
+   Do NOT rely on URLs from your training data or the user's prompt
+   unless you fetch them. Observed 2026-04-24: the
+   `chatgpt-image-2-research` session ended with 7 hallucinated URLs
+   (Twitter posts, GitHub repos, OpenAI blog posts, external guides)
+   that Claude cited inline from memory without fetching — the report
+   looked authoritative but had fabricated provenance.
 
 If you need to "debug why fetch failed", use `ascent_diff`,
 `ascent_coverage`, or just describe the failure to the user — do not
@@ -314,6 +332,11 @@ user before any retry decision the user might want to override.
    (`actionbook browser close-tab --session <SID> --tab <TID>`). If the
    shared session has 20+ tabs, reset it with
    `actionbook browser close --session <SID>`.
+8. NEVER cite a URL in session output (overview, sections, wiki bodies)
+   that wasn't successfully fetched via `ascent_add` / `ascent_batch` in
+   the current session. Triggers `sources_hallucinated` blocker,
+   indistinguishable from fabrication. To cite a new URL, call
+   `ascent_add` first and drop the citation if it returns `ok: false`.
 
 ---
 
