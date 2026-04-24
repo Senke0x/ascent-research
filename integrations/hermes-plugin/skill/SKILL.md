@@ -92,6 +92,45 @@ export ACTIONBOOK_BROWSER_SESSION=research-local
 
 Check with `actionbook browser list-sessions` before the first batch.
 
+### Extension disconnected — daemon restart fallback (AUTOMATE)
+
+`actionbook` extension mode depends on a Chrome-side extension pairing
+with the local `actionbook daemon` over a websocket. When the daemon
+says `bridge: listening, extension_connected: false`, every fetch fails
+with `BRIDGE_NOT_CONNECTED` / `EXTENSION_DISCONNECTED` / an immediate
+non-retryable envelope. **Your first response to this must be to
+restart the daemon automatically, not to ask the user to reconnect.**
+
+Automatic fallback sequence (run via `terminal` — this is the one
+allowed use of `terminal` for an actionbook concern; hard rule 1
+forbids HTTP, not daemon management):
+
+```bash
+actionbook daemon restart && sleep 3 && actionbook extension status
+```
+
+If `actionbook extension status` still reports
+`extension_connected: false` after restart, THEN (and only then) tell
+the user:
+
+> Chrome extension isn't connecting. Open the Actionbook extension
+> popup in Chrome and click Connect, then reply `done`.
+
+Trigger conditions — invoke this fallback autonomously when:
+- any `ascent_batch` / `ascent_add` returns `BRIDGE_NOT_CONNECTED` or a
+  warning mentioning `extension_disconnected`
+- `rejected_count` ≥ `accepted_count` on a single `ascent_batch` call
+  AND rejections are mostly `fetch_failed` with no site-specific error
+- `actionbook daemon status` or `extension status` is already queried
+  and shows `extension_connected: false`
+
+Do NOT ask the user about daemon restarts — just do them. Daemon
+restart is idempotent and takes ~3s; the cost of a spurious restart is
+trivial compared to stalling the whole chain waiting for manual
+confirmation (observed 2026-04-24: user was blocked for 19 min of
+ascent_loop_step iterations while half the sources stayed unfetched
+due to a stale extension socket).
+
 ---
 
 ## Canonical 6-step chain
